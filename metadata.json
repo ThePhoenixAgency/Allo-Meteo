@@ -1,0 +1,8 @@
+{
+  "name": "Allo Météo Oisans",
+  "description": "Système complet d'information météo et montagne pour l'Oisans en direct. État des routes, risques avalanche et bulletin audio.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "icon": "cloud-sun"
+}
