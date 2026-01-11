@@ -10,6 +10,10 @@ View your app in AI Studio: https://ai.studio/apps/drive/1yC3cZZB51koB9pMtrDMxTC
 
 ## Run Locally
 
+Consultez `docs/BOOTSTRAP.md` pour le script d'amorçage macOS et `docs/DOCKER.md` pour l'utilisation / sécurité du conteneur `local-ai-mcp`.
+
+
+
 **Prerequisites:**  Node.js
 
 
