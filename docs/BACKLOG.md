@@ -10,7 +10,7 @@ Généré automatiquement par l'assistant. Date: 2026-01-11
 |----|-------|--------|
 | 1  | Docs: ajouter guide d'exécution & exemple d'utilisation | completed |
 | 2  | Docs: ajouter `docs/DOCKER.md` (but, commandes, checklist sécurité) | completed |
-| 3  | CI: intégrer scan Docker image (Trivy) dans GitHub Actions | not-started (à prioriser) |
+| 3  | CI: intégrer scan Docker image (Trivy) dans GitHub Actions | in-progress |
 | 4  | CI: ajouter job pour builder l'image et échouer/alerter en cas de vulnérabilités critiques | not-started |
 | 5  | Code: vérifier `packages/local-ai-mcp/Dockerfile` pour utiliser un utilisateur non-root et multi-stage build | not-started |
 | 6  | Docs: ajouter section 'Lancer le conteneur' dans `docs/BOOTSTRAP.md` et `README.md` | completed |
@@ -54,5 +54,17 @@ Généré automatiquement par l'assistant. Date: 2026-01-11
 Notes & décisions en suspens:
 - Décider si l'absence de `GEMINI_API_KEY` doit rendre le CI fatal ou non (voir tâche 30).
 - Déterminer le owner pour le Job Trivy / CI (ex: "devops@thephoenixagency"), assigner dans la première PR.
+
+## Questions en suspens (consignées — l'assistant ne posera plus de questions)
+- Policy: faut-il rendre le CI fatal si `GEMINI_API_KEY` est absent ? (voir tâche 30)
+- Owner: qui est responsable du Job Trivy / CI ?
+- Publication: décider de la politique de publication NPM/GHCR (qui a accès aux secrets)
+- Priorité: prioriser le job Trivy (ID 3) ou l'audit/patch du Dockerfile (ID 5)
+
+## Notes de l'assistant
+Toutes les questions, propositions et décisions en suspens sont consignées ci-dessus.
+L'assistant n'émettra plus de questions actives — il documentera toute proposition ou décision dans ce fichier et attendra des instructions via Issues/PRs ou assignations dans le backlog.
+
+_Last updated: 2026-01-11_
 
 Si tu veux, je crée des Issues GitHub pour chaque item prioritaire et je fais une PR pour le job Trivy en premier lieu. (Me dire si tu veux que je priorise autre chose.)
