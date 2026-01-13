@@ -22,6 +22,22 @@ import { GoogleGenAI, Modality } from "@google/genai";
 
 const LOCATION = "Le Bourg d'Oisans";
 const REPO_URL = "https://github.com/ThePhoenixAgency/Allo-meteo";
+const LOCAL_AI_BASE_URLS = ['http://192.168.1.57:6667'];
+const LOCAL_AI_BASE_URL = LOCAL_AI_BASE_URLS[0]; // legacy compatibility (now pointed at LM Studio)
+const LOCATION_COORDS = { lat: 45.0053, lon: 6.0748 };
+const hasGeminiKey = Boolean(process.env.API_KEY);
+const TEXT_COOLDOWN_MS = 5000;
+const TTS_COOLDOWN_MS = 5000;
+
+type ManualWeather = {
+  temperature: number;
+  windspeed: number;
+  winddirection: number;
+  humidity?: number | null;
+  pressure?: number | null;
+  precipitation?: number | null;
+  timestamp: string;
+};
 
 const spinAnimation = `
   @keyframes slow-spin {
@@ -84,6 +100,242 @@ async function decodeAudioData(
   return buffer;
 }
 
+const buildExpertPrompt = () => {
+  const today = new Date().toLocaleDateString('fr-FR');
+  return `INFOS OISANS EN DIRECT - ${today} :
+      NE CHERCHE PAS VILLARD-BONNOT NI ESPACE ARAGON.
+      1. METEO: Température actuelle au Bourg d'Oisans (°C), ressenti, humidité (%), pression (hPa), pluie (mm), neige (cm).
+      DÉTERMINE SI INVERSION THERMIQUE active.
+      2. ROUTE: RD1091 (Grenoble-Oisans-Briançon).
+      3. STATIONS: Températures actuelles (°C) EXCLUSIVEMENT pour :
+      Alpe d'Huez, Les 2 Alpes, Vaujany, Oz-en-Oisans, Saint-Christophe-en-Oisans, Villard-Reculas.
+      FORMAT STRICT STATIONS: Une station par ligne, "Nom station : Valeur°C".
+      4. RISQUES: Sismique et Crues.
+      5. EVENEMENTS: 3 évènements (1 par ligne).
+      6. LUNE: Phase.
+      BALISES: [METEO], [ROUTE], [STATIONS], [RISQUES], [EVENEMENTS], [LUNE], [INVERSION]. RÉPONSE TRÈS COURTE ET RAPIDE SANS BLA-BLA.`;
+};
+
+type LocalTextResponse = {
+  text?: string;
+  sources?: any[];
+};
+
+const LOCAL_TEXT_ENDPOINTS = [
+  '/v1/responses', '/v1/chat/completions', '/v1/completions',
+  '/generate', '/api/generate', '/api/inference', '/api/v1/generate',
+  '/v1/generate', '/api/completions', '/completions', '/inference'
+];
+
+async function tryLocalEndpoint(base: string, path: string, prompt: string) {
+  const url = `${base}${path}`;
+  // include selected model if present
+  const selectedModel = typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_model') || '').trim() : '';
+  const payloads = [
+    // prefer model-aware payloads
+    ...(selectedModel ? [ { model: selectedModel, input: prompt }, { model: selectedModel, messages: [{ role: 'user', content: prompt }] } ] : []),
+    { prompt },
+    { input: prompt },
+    { inputs: prompt },
+    { text: prompt },
+    { messages: [{ role: 'user', content: prompt }] },
+    { model: 'default', prompt },
+  ];
+
+  for (const body of payloads) {
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const text = await res.text();
+      let json: any = null;
+      try { json = JSON.parse(text); } catch (e) { json = null; }
+      if (res.ok && json) {
+        try { console.info(`Probe ${base}${path} OK ${res.status} - body preview:`, JSON.stringify(json).slice(0,500)); } catch(e) {}
+
+        const extractText = (obj: any): string | null => {
+          if (!obj) return null;
+          if (typeof obj === 'string') return obj;
+          if (obj.text && typeof obj.text === 'string') return obj.text;
+          if (obj.generated_text && typeof obj.generated_text === 'string') return obj.generated_text;
+          if (Array.isArray(obj.output) && obj.output.length) {
+            const parts: string[] = [];
+            for (const item of obj.output) {
+              if (item && Array.isArray(item.content)) {
+                for (const c of item.content) {
+                  if (c && c.type === 'output_text' && typeof c.text === 'string') parts.push(c.text);
+                  else if (typeof c === 'string') parts.push(c);
+                  else if (c && c.text && typeof c.text === 'string') parts.push(c.text);
+                }
+              }
+              if (item && typeof item.text === 'string') parts.push(item.text);
+            }
+            if (parts.length) return parts.join('\n');
+          }
+          if (obj.choices && Array.isArray(obj.choices) && obj.choices[0]) {
+            const ch = obj.choices[0];
+            if (typeof ch.text === 'string') return ch.text;
+            if (ch.message && ch.message.content && typeof ch.message.content === 'string') return ch.message.content;
+          }
+          if (Array.isArray(obj.output)) return obj.output.map((x: any) => (typeof x === 'string' ? x : JSON.stringify(x))).join('\n');
+          return null;
+        };
+
+        const extracted = extractText(json) || extractText(json.candidates?.[0]) || extractText(json.choices?.[0]);
+        if (extracted) {
+          try { console.info(`Using extracted text from ${base}${path}:`, extracted.slice(0,200)); } catch(e) {}
+          const tokens = json?.usage?.total_tokens || json?.usage?.total || json?.token_count || Math.max(1, Math.round((extracted.split(/\s+/).length) / 0.75));
+          return { text: extracted, sources: json.sources || json.metadata || [], tokens };
+        }
+
+      }
+      if (json && json.error) {
+        console.debug(`local endpoint ${base}${path} responded with error:`, json.error);
+        continue;
+      }
+      try { console.debug(`Probe ${base}${path} returned ${res.status} but no usable fields. body preview:`, (json ? JSON.stringify(json).slice(0,500) : 'non-json response')); } catch(e) {}
+    } catch (e) {
+      console.debug(`failed ${url}:`, e.message || e);
+      continue;
+    }
+  }
+  return null;
+}
+
+const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: string; sources: any[], perf?: { latencyMs: number, model?: string, tokens?: number } }> => {
+  if (hasGeminiKey) {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+        thinkingConfig: { thinkingBudget: 0 }
+      },
+    });
+    return {
+      text: response.text || '',
+      sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [],
+    };
+  }
+
+  const t0 = performance.now();
+  // try cached endpoint
+  const cached = (localStorage.getItem('allo_meteo_local_text_endpoint') || '').trim();
+  if (cached) {
+    try { console.info('Trying cached text endpoint:', cached); } catch(e) {}
+    for (const base of LOCAL_AI_BASE_URLS) {
+      const result = await tryLocalEndpoint(base, cached, prompt);
+      if (result) {
+        const latency = Math.round(performance.now() - t0);
+        console.info('Text fetched from cached endpoint');
+        localStorage.setItem('allo_meteo_local_text_endpoint', `${base}${cached}`);
+        return { ...result, perf: { latencyMs: latency, model: localStorage.getItem('allo_meteo_model') || undefined, tokens: result.tokens || undefined } };
+      }
+    }
+    localStorage.removeItem('allo_meteo_local_text_endpoint');
+  }
+
+  // probe endpoints across bases
+  for (const base of LOCAL_AI_BASE_URLS) {
+    for (const p of LOCAL_TEXT_ENDPOINTS) {
+      const result = await tryLocalEndpoint(base, p, prompt);
+      if (result) {
+        const latency = Math.round(performance.now() - t0);
+        localStorage.setItem('allo_meteo_local_text_endpoint', `${base}${p}`);
+        console.info(`Detected working local text endpoint: ${base}${p}`);
+        return { ...result, perf: { latencyMs: latency, model: localStorage.getItem('allo_meteo_model') || undefined, tokens: result.tokens || undefined } };
+      }
+    }
+  }
+
+  throw new Error('Aucun endpoint local compatible trouvé');
+};
+
+type LocalTtsResponse = {
+  audio?: string;
+};
+
+const LOCAL_TTS_ENDPOINTS = ['/tts', '/api/tts', '/api/speech', '/v1/tts', '/api/v1/tts'];
+
+async function tryLocalTtsEndpoint(base: string, path: string, prompt: string) {
+  const url = `${base}${path}`;
+  const payloads = [{ prompt }, { text: prompt }, { input: prompt }, { messages: [{ role: 'user', content: prompt }] }];
+  for (const body of payloads) {
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const json = await res.json().catch(() => null);
+      if (res.ok && json) {
+        try { console.info(`Probe tts ${base}${path} OK ${res.status} - body preview:`, JSON.stringify(json).slice(0,500)); } catch(e) {}
+        if (json.audio || json.base64 || json.data) {
+          try { console.info(`Using audio field from ${base}${path}, length: ${((json.audio||json.base64||json.data)||'').length}`); } catch(e) {}
+          return (json.audio || json.base64 || json.data) as string;
+        }
+      }
+      if (json && json.error) {
+        console.debug(`local tts ${base}${path} replied error`, json.error);
+        continue;
+      }
+      try { console.debug(`Probe tts ${base}${path} returned ${res.status} but no audio field. body preview:`, (json ? JSON.stringify(json).slice(0,500) : 'non-json response')); } catch(e) {}
+    } catch (e) {
+      console.debug(`failed tts ${url}:`, e.message || e);
+      continue;
+    }
+  }
+  return null;
+}
+
+
+const fetchBulletinAudioWithFallback = async (prompt: string) => {
+  if (!prompt) return { audio: null, perf: undefined };
+  const t0 = performance.now();
+  if (hasGeminiKey) {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-preview-tts',
+      contents: [{ parts: [{ text: prompt }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+      },
+    });
+    const audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
+    const perf = { latencyMs: Math.round(performance.now() - t0), model: 'gemini' };
+    return { audio, perf };
+  }
+
+  // try cached tts endpoint
+  const cachedTts = (localStorage.getItem('allo_meteo_local_tts_endpoint') || '').trim();
+  if (cachedTts) {
+    try { console.info('Trying cached TTS endpoint:', cachedTts); } catch(e) {}
+    for (const base of LOCAL_AI_BASE_URLS) {
+      try {
+        const path = cachedTts.startsWith('http') ? cachedTts.replace(base, '') : cachedTts;
+        const audio = await tryLocalTtsEndpoint(base + '', path, prompt);
+        if (audio) {
+          const perf = { latencyMs: Math.round(performance.now() - t0), model: localStorage.getItem('allo_meteo_model') || undefined };
+          console.info('Audio fetched from cached TTS endpoint');
+          localStorage.setItem('allo_meteo_local_tts_endpoint', `${base}${path}`);
+          return { audio, perf };
+        }
+      } catch(e) {}
+    }
+    localStorage.removeItem('allo_meteo_local_tts_endpoint');
+  }
+
+  for (const base of LOCAL_AI_BASE_URLS) {
+    for (const p of LOCAL_TTS_ENDPOINTS) {
+      const audio = await tryLocalTtsEndpoint(base, p, prompt);
+      if (audio) {
+        const perf = { latencyMs: Math.round(performance.now() - t0), model: localStorage.getItem('allo_meteo_model') || undefined };
+        localStorage.setItem('allo_meteo_local_tts_endpoint', `${base}${p}`);
+        console.info(`Detected working local tts endpoint: ${base}${p}`);
+        return { audio, perf };
+      }
+    }
+  }
+
+  return { audio: null, perf: undefined };
+};
+
 const App = () => {
   const [loading, setLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -91,12 +343,105 @@ const App = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [expertData, setExpertData] = useState<any>(null);
   const [newsletterSubscribed, setNewsletterSubscribed] = useState(false);
+  const [manualWeather, setManualWeather] = useState<ManualWeather | null>(null);
+  const [manualLoading, setManualLoading] = useState(false);
+  const [lastPerf, setLastPerf] = useState<any>({});
+  const [selectedModel, setSelectedModel] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_model') || '') : ''));
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [aiEndpoint, setAiEndpoint] = useState<string | null>(null);
+  const textCooldownRef = useRef<number>(0);
+  const ttsCooldownRef = useRef<number>(0);
+  const [textCooldownRemaining, setTextCooldownRemaining] = useState(0);
+  const [ttsCooldownRemaining, setTtsCooldownRemaining] = useState(0);
+
+  // MCP configuration (external micro-MCP server)
+  const [mcpUrl, setMcpUrl] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_url') || '') : ''));
+  const [mcpHost, setMcpHost] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_host') || LOCAL_AI_BASE_URLS[0]) : LOCAL_AI_BASE_URLS[0]));
+  const [mcpSecret, setMcpSecret] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_secret') || '') : ''));
+  const [mcpStatus, setMcpStatus] = useState<any>(null);
+
+  useEffect(() => {
+    try {
+      if (selectedModel && selectedModel.trim()) localStorage.setItem('allo_meteo_model', selectedModel.trim());
+      else localStorage.removeItem('allo_meteo_model');
+      // re-fetch to re-probe endpoints with preferred model
+      fetchExpertData();
+    } catch(e) {}
+  }, [selectedModel]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setTextCooldownRemaining(Math.max(0, TEXT_COOLDOWN_MS - Math.max(0, now - (textCooldownRef.current || 0))));
+      setTtsCooldownRemaining(Math.max(0, TTS_COOLDOWN_MS - Math.max(0, now - (ttsCooldownRef.current || 0))));
+    }, 500);
+    return () => clearInterval(timer);
+  }, []);
   
   const audioContextRef = useRef<AudioContext | null>(null);
   const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
 
+  const fetchManualWeather = async () => {
+    try {
+      setManualLoading(true);
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${LOCATION_COORDS.lat}&longitude=${LOCATION_COORDS.lon}&current_weather=true&hourly=relativehumidity_2m,pressure_msl,precipitation&timezone=Europe%2FParis`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Open-Meteo répond ${response.status}`);
+      }
+      const data = await response.json();
+      const current = data.current_weather;
+      const hourly = data.hourly || {};
+      let humidity: number | null = null;
+      let pressure: number | null = null;
+      let precipitation: number | null = null;
+      if (current && hourly.time) {
+        const timeIndex = hourly.time.indexOf(current.time);
+        if (timeIndex !== -1) {
+          humidity = hourly.relativehumidity_2m?.[timeIndex] ?? null;
+          pressure = hourly.pressure_msl?.[timeIndex] ?? null;
+          precipitation = hourly.precipitation?.[timeIndex] ?? null;
+        }
+      }
+      if (current) {
+        setManualWeather({
+          temperature: current.temperature,
+          windspeed: current.windspeed,
+          winddirection: current.winddirection,
+          humidity,
+          pressure,
+          precipitation,
+          timestamp: current.time,
+        });
+      }
+    } catch (error) {
+      console.error('Manual weather fetch failed', error);
+    } finally {
+      setManualLoading(false);
+    }
+  };
+
+  const detectLocalModels = async () => {
+    for (const base of LOCAL_AI_BASE_URLS) {
+      try {
+        const res = await fetch(`${base}/v1/models`);
+        if (!res.ok) continue;
+        const json = await res.json().catch(() => null);
+        if (!json) continue;
+        let models: string[] = [];
+        if (Array.isArray(json.models)) models = json.models.map((m:any) => m.id).filter(Boolean);
+        else if (Array.isArray(json)) models = json.map((m:any) => (m.id || m)).filter(Boolean);
+        if (models.length) { setAvailableModels(models); setAiEndpoint(base); console.info('Detected models at', base, models.slice(0,10)); return; }
+      } catch (e) { console.debug('detectLocalModels failed for', base, e); }
+    }
+    setAvailableModels([]);
+    setAiEndpoint(null);
+  };
+
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    fetchManualWeather();
+    detectLocalModels();
     fetchExpertData();
     return () => {
       clearInterval(timer);
@@ -107,34 +452,29 @@ const App = () => {
   const fetchExpertData = async () => {
     setGlobalLoading(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const prompt = `INFOS OISANS EN DIRECT - ${new Date().toLocaleDateString('fr-FR')} :
-      NE CHERCHE PAS VILLARD-BONNOT NI ESPACE ARAGON.
-      1. METEO: Température actuelle au Bourg d'Oisans (°C), ressenti, humidité (%), pression (hPa), pluie (mm), neige (cm).
-      DÉTERMINE SI INVERSION THERMIQUE active.
-      2. ROUTE: RD1091 (Grenoble-Oisans-Briançon).
-      3. STATIONS: Températures actuelles (°C) EXCLUSIVEMENT pour : 
-      Alpe d'Huez, Les 2 Alpes, Vaujany, Oz-en-Oisans, Saint-Christophe-en-Oisans, Villard-Reculas.
-      FORMAT STRICT STATIONS: Une station par ligne, "Nom station : Valeur°C".
-      4. RISQUES: Sismique et Crues.
-      5. EVENEMENTS: 3 évènements (1 par ligne).
-      6. LUNE: Phase.
-      BALISES: [METEO], [ROUTE], [STATIONS], [RISQUES], [EVENEMENTS], [LUNE], [INVERSION]. RÉPONSE TRÈS COURTE ET RAPIDE SANS BLA-BLA.`;
+      const now = Date.now();
+      if (now - (textCooldownRef.current || 0) < TEXT_COOLDOWN_MS) {
+        const remaining = TEXT_COOLDOWN_MS - (now - (textCooldownRef.current || 0));
+        setLastPerf((p:any) => ({ ...p, rateLimitedUntil: Date.now() + remaining }));
+        console.warn('Skipped fetchExpertData due to rate limit', remaining);
+        setGlobalLoading(false);
+        return;
+      }
+      textCooldownRef.current = now;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
-        config: { 
-          tools: [{ googleSearch: {} }],
-          thinkingConfig: { thinkingBudget: 0 } 
-        },
-      });
-      
-      const rawText = response.text || "";
+      const prompt = buildExpertPrompt();
+      const res = await fetchExpertTextWithFallback(prompt);
+      const rawText = res.text || '';
       const cleanText = rawText.replace(/[\*#_>`~]/g, '');
-      setExpertData({ text: cleanText, sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [] });
+      console.info('Expert text fetched. excerpt:', cleanText.slice(0,400));
+      console.debug('Expert sources:', res.sources, 'perf:', res.perf);
+      setExpertData({ text: cleanText, sources: res.sources });
+      if (res.perf) setLastPerf((p:any) => ({ ...p, textLatencyMs: res.perf.latencyMs, model: res.perf.model, tokens: res.perf.tokens }));
     } catch (error) {
       console.error("Erreur API:", error);
+      if (error && typeof (error as any).message === 'string' && (error as any).message.includes('Rate limited')) {
+        setLastPerf((p:any) => ({ ...p, rateLimitedUntil: Date.now() + TEXT_COOLDOWN_MS }));
+      }
     } finally {
       setGlobalLoading(false);
     }
@@ -161,25 +501,25 @@ const App = () => {
 
   const playWeatherBulletin = async () => {
     if (isPlaying) { stopAudio(); return; }
+    const now = Date.now();
+    if (now - (ttsCooldownRef.current || 0) < TTS_COOLDOWN_MS) {
+      const remaining = TTS_COOLDOWN_MS - (now - (ttsCooldownRef.current || 0));
+      setLastPerf((p:any) => ({ ...p, rateLimitedUntil: Date.now() + remaining }));
+      console.warn('Skipped playWeatherBulletin due to TTS rate limit', remaining);
+      return;
+    }
     setLoading(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const promptText = `Tu es l'assistant Allo-Météo. INTERDICTION ABSOLUE : ne dis pas "Phoenix Project" ni "réel". 
       CONSIGNE PHONÉTIQUE : Prononce TRÈS DISTINCTEMENT les S finaux et les terminaisons. 
       Dis clairement : LES DEUZZZZ ALPESSSS, BOURGGGG D'OISANSSSS, OZZZZ EN OISANSSSS, ALPE D'HUEZZZZ.
       Données : ${expertData?.text}`;
-      
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: promptText }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
-        },
-      });
-
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      const { audio: base64Audio, perf } = await fetchBulletinAudioWithFallback(promptText);
       if (!base64Audio) { setLoading(false); return; }
+
+      ttsCooldownRef.current = Date.now();
+      if (perf) setLastPerf((p:any) => ({ ...p, audioLatencyMs: perf.latencyMs, model: perf.model }));
+      try { console.info('Fetched audio length:', base64Audio.length); } catch(e) {}
 
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       const audioBuffer = await decodeAudioData(decodeBase64(base64Audio), audioContextRef.current, 24000, 1);
@@ -197,12 +537,23 @@ const App = () => {
   const stationsText = getSection('STATIONS');
   const risquesText = getSection('RISQUES');
   const inversion = getSection('INVERSION');
-  
-  const currentTemp = meteoText.match(/(\-?\d+)\s?°/)?.[1] || "12";
-  const humidity = (meteoText.match(/(\d+)\s?%/)?.[1] || "65") + "%";
-  const rain = (meteoText.match(/(\d+[,.]?\d*)\s?mm/)?.[1] || "0") + " mm";
-  
-  const hasInversion = inversion.toLowerCase().includes("oui") || inversion.toLowerCase().includes("active") || inversion.toLowerCase().includes("présente") || inversion.toLowerCase().includes("yes");
+
+  const manualTemperature = manualWeather?.temperature !== undefined ? manualWeather.temperature.toFixed(1) : null;
+  const manualHumidityValue = manualWeather?.humidity ?? null;
+  const manualRainValue = manualWeather?.precipitation ?? null;
+  const manualPressureValue = manualWeather?.pressure ?? null;
+
+  const currentTemp = meteoText.match(/(\-?\d+)\s?°/)?.[1] || manualTemperature || "12";
+  const humidity = (meteoText.match(/(\d+)\s?%/)?.[1] || (manualHumidityValue !== null ? Math.round(manualHumidityValue).toString() : "65")) + "%";
+  const rain = (meteoText.match(/(\d+[,.]?\d*)\s?mm/)?.[1] || (manualRainValue !== null ? manualRainValue.toFixed(1) : "0")) + " mm";
+  const pressure = (meteoText.match(/(\d+)\s?hPa/)?.[1] || (manualPressureValue !== null ? manualPressureValue.toFixed(0) : "1018")) + " hPa";
+
+  const hasInversionText = inversion.toLowerCase().includes("oui") || inversion.toLowerCase().includes("active") || inversion.toLowerCase().includes("présente") || inversion.toLowerCase().includes("yes");
+  const hasInversion = hasInversionText || (manualWeather && manualWeather.temperature <= 2);
+
+  const manualSummaryLine = manualWeather
+    ? `Open-Meteo ${new Date(manualWeather.timestamp).toLocaleTimeString('fr-FR')} • ${manualWeather.temperature.toFixed(1)}°C • Vent ${manualWeather.windspeed.toFixed(1)} km/h`
+    : '';
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans pb-16">
@@ -216,10 +567,17 @@ const App = () => {
               <span className="text-xs font-bold text-blue-500 tracking-[0.3em] uppercase">Oisans 2026</span>
             </div>
           </div>
-          <button onClick={playWeatherBulletin} className={`flex items-center gap-4 px-8 py-4 rounded-[2rem] font-black transition-all shadow-2xl active:scale-95 ${isPlaying ? 'bg-red-500 text-white animate-pulse' : 'bg-blue-600 text-white'}`}>
-            {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : (isPlaying ? <Square className="w-6 h-6 fill-current" /> : <Volume2 className="w-6 h-6" />)}
-            <span className="text-lg uppercase">{isPlaying ? "STOP" : "BULLETIN"}</span>
-          </button>
+          <div className="flex items-center gap-4">
+            <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="bg-white/90 px-3 py-2 rounded-lg font-bold text-sm border">
+              <option value="">Auto (détecte local)</option>
+              {availableModels.length ? availableModels.map(m => <option key={m} value={m}>{m}</option>) : <option disabled>Aucun modèle local détecté</option>}
+              <option value="custom">Custom (mettre via localStorage)</option>
+            </select>
+            <button onClick={playWeatherBulletin} className={`flex items-center gap-4 px-8 py-4 rounded-[2rem] font-black transition-all shadow-2xl active:scale-95 ${isPlaying ? 'bg-red-500 text-white animate-pulse' : 'bg-blue-600 text-white'}`}>
+              {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : (isPlaying ? <Square className="w-6 h-6 fill-current" /> : <Volume2 className="w-6 h-6" />)}
+              <span className="text-lg uppercase">{isPlaying ? "STOP" : "BULLETIN"}</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -259,7 +617,7 @@ const App = () => {
                   { icon: CloudRain, label: 'PRÉCIP.', val: rain },
                   { icon: CloudSnow, label: 'NEIGE', val: (meteoText.match(/(\d+)\s?cm/i)?.[1] || "0") + ' cm' },
                   { icon: Droplets, label: 'HUMIDITÉ', val: humidity },
-                  { icon: Gauge, label: 'PRESSION', val: (meteoText.match(/(\d+)\s?hPa/i)?.[1] || "1018") + ' hPa' }
+                  { icon: Gauge, label: 'PRESSION', val: pressure }
                 ].map((item, i) => (
                   <div key={i} className="bg-white/10 p-6 rounded-[2rem] border border-white/20">
                     <item.icon className="w-8 h-8 mb-4 text-blue-300" />
@@ -268,6 +626,12 @@ const App = () => {
                   </div>
                 ))}
               </div>
+              {!expertData?.text && manualSummaryLine && (
+                <div className="mt-8 px-6 py-4 bg-white/20 rounded-[2rem] border border-white/30 text-[11px] font-black uppercase tracking-[0.3em] text-white/80">
+                  {manualSummaryLine}
+                  {manualLoading && ' • Chargement Open-Meteo...'}
+                </div>
+              )}
             </div>
           </section>
 
@@ -352,6 +716,20 @@ const App = () => {
             <div className="p-6 bg-orange-50 rounded-[2rem] border-2 border-orange-100 text-center">
               <p className="text-[10px] font-black uppercase text-orange-400 mb-1 tracking-widest">Saint du Jour</p>
               <p className="text-2xl font-black uppercase text-orange-900">{getHardcodedSaint()}</p>
+            </div>
+          </section>
+          <section className="bg-white rounded-[3rem] p-6 shadow-sm border border-slate-200">
+            <h3 className="text-xl font-black mb-4 uppercase text-slate-900">ÉTAT IA</h3>
+            <div className="text-sm text-slate-700 space-y-2">
+              <div><strong>Endpoint:</strong> {aiEndpoint || (localStorage.getItem('allo_meteo_local_text_endpoint') || 'Aucun')}</div>
+              <div><strong>Modèle:</strong> {selectedModel || 'Auto'}</div>
+              <div><strong>Latences:</strong> texte {lastPerf?.textLatencyMs ?? '-'} ms · audio {lastPerf?.audioLatencyMs ?? '-'} ms</div>
+              <div><strong>Tokens:</strong> {lastPerf?.tokens ?? '-'}</div>
+              <div><strong>Rate:</strong> {textCooldownRemaining ? `texte cooldown ${Math.ceil(textCooldownRemaining/1000)}s` : 'ok'} · {ttsCooldownRemaining ? `tts cooldown ${Math.ceil(ttsCooldownRemaining/1000)}s` : 'ok'}</div>
+              <div className="flex gap-2 mt-3">
+                <button onClick={() => { localStorage.removeItem('allo_meteo_local_text_endpoint'); detectLocalModels(); }} className="px-3 py-2 bg-blue-600 text-white rounded">Ré-detecter</button>
+                <button onClick={() => { setAvailableModels([]); setSelectedModel(''); localStorage.removeItem('allo_meteo_model'); }} className="px-3 py-2 bg-white border rounded">Reset modèle</button>
+              </div>
             </div>
           </section>
           <div onClick={() => window.open(REPO_URL, '_blank')} className="bg-slate-900 p-10 rounded-[3rem] text-white flex justify-between items-center group cursor-pointer active:scale-95 transition-all shadow-2xl border-b-[8px] border-slate-800">

@@ -1,0 +1,39 @@
+# Auto fix & commit workflow
+# - Runs on pushes to `main` and can be triggered manually.
+# - Runs `eslint --fix` and `prettier --write`, and auto-commits the fixes back to the branch.
+# - WARNING: This workflow commits changes automatically; if you prefer only PRs, restrict triggers or remove the push trigger.
+
+name: Auto Fix & Commit
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  auto-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run lint fix & format
+        run: |
+          npm run lint:fix || true
+          npm run format || true
+
+      - name: Commit & push fixes
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "chore: autofix lint/format [auto]"
+          file_pattern: "**/*.{js,ts,tsx,css,json,md}" 
+          add_all: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

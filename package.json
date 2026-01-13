@@ -6,7 +6,16 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "local-ai": "node scripts/local-ai-server.js",
+    "detect-local-ai": "node scripts/detect-local-ai.js",
+    "prepare": "husky install",
+    "lint": "eslint \"**/*.{js,ts,tsx}\" --max-warnings=0 || true",
+    "lint:fix": "eslint \"**/*.{js,ts,tsx}\" --fix || true",
+    "format": "prettier --write \"**/*.{js,ts,tsx,json,md,css}\" || true",
+    "typecheck": "tsc --noEmit",
+    "security-check": "npm audit --audit-level=moderate || true",
+    "validate": "npm run lint && npm run typecheck && npm run security-check && npm run build"
   },
   "dependencies": {
     "@google/genai": "^1.34.0",
@@ -19,6 +28,13 @@
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "husky": "^8.0.0",
+    "lint-staged": "^13.0.0",
+    "eslint": "^8.40.0",
+    "eslint-plugin-react": "^7.32.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "prettier": "^3.2.0"
   }
 }

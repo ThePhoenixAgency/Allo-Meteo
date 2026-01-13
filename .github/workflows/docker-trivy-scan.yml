@@ -1,0 +1,53 @@
+name: Docker image scan (Trivy)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (for buildx)
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: |
+          docker build -f packages/local-ai-mcp/Dockerfile -t local-ai-mcp:latest packages/local-ai-mcp
+
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $HOME/.local/bin v0.44.0
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          trivy --version
+
+      - name: Run Trivy scan (JSON output)
+        run: |
+          trivy image --format json --output trivy-report.json local-ai-mcp:latest || true
+          jq --version || sudo apt-get update -y && sudo apt-get install -y jq || true
+          cat trivy-report.json
+          # Fail the job if any CRITICAL vuln present
+          if jq -e '.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")' trivy-report.json >/dev/null 2>&1; then
+            echo "CRITICAL vulnerabilities found in image";
+            exit 1;
+          else
+            echo "No CRITICAL vulnerabilities found";
+          fi
+
+      - name: Upload Trivy report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-report.json

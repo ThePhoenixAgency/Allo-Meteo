@@ -1,0 +1,31 @@
+# Security Audit
+# - Scheduled weekly (Mon 03:00 UTC) and can be triggered manually.
+# - Runs `npm audit` and collects the JSON output as an artifact for review.
+# - Adjust cron or add extra checks (Snyk, dependency-check) as needed.
+
+name: Security Audit
+
+on:
+  schedule:
+    - cron: '0 3 * * 1' # weekly
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install
+        run: npm ci
+
+      - name: Run npm audit
+        run: |
+          npm audit --json > audit.json || true
+          cat audit.json | jq '. | { advisories: .advisories, metadata: .metadata }' > audit-summary.json || true
+
+      - name: Upload audit results
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit
+          path: audit.json

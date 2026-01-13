@@ -1,0 +1,8 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Run lightweight validation on pre-push (typecheck + lint)
+npm run lint --silent || true
+npm run typecheck --silent || true
+# Run security audit quietly (doesn't block push by default)
+npm run security-check --silent || true

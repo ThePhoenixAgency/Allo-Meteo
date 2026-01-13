@@ -1,0 +1,101 @@
+# Manual release workflow
+# - Trigger: 'Run workflow' from the Actions tab (workflow_dispatch)
+# - Inputs:
+#   publish_npm: set to true to publish the npm tarball to npmjs.org (requires NPM_TOKEN secret)
+#   publish_docker: set to true to push a Docker image to GHCR (requires GHCR_TOKEN secret)
+#   package_version: optional semver string to override the package.json version for the artifact
+# - Notes: The workflow creates an artifact (tgz), optionally builds a container image and can publish. It creates a draft GitHub Release with the tgz attached.
+
+name: Release (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_npm:
+        description: 'Publish package to npm (requires NPM_TOKEN)'
+        required: false
+        default: 'false'
+      publish_docker:
+        description: 'Publish Docker image to GHCR (requires GHCR_TOKEN)'
+        required: false
+        default: 'false'
+      package_version:
+        description: 'Optional explicit version to set (ex 0.1.1)'
+        required: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Map GEMINI_API_KEY secret into API_KEY for any scripts that need it during the release job.
+    # Ensure you add GEMINI_API_KEY to repository Secrets before using Gemini in release workflows.
+    env:
+      API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check GEMINI secret presence (non-fatal)
+        run: |
+          node -e "console.log(Boolean(process.env.API_KEY) ? 'GEMINI OK' : 'GEMINI MISSING')"
+        # The job already maps GEMINI_API_KEY to API_KEY via job-level env; explicit env here is optional.
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build & Pack local-ai-mcp
+        run: |
+          cd packages/local-ai-mcp
+          npm ci
+          if [ -n "${{ github.event.inputs.package_version }}" ]; then
+            # set package version (no git tag here) for the packed artifact
+            npm version --no-git-tag-version ${{ github.event.inputs.package_version }}
+          fi
+          npm run pack
+        env:
+          CI: true
+
+      - name: Upload pack artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-ai-mcp-pack
+          path: packages/local-ai-mcp/dist/*.tgz
+
+      - name: Build Docker image
+        if: ${{ github.event.inputs.publish_docker == 'true' }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ./packages/local-ai-mcp
+          push: false
+          tags: ghcr.io/${{ github.repository_owner }}/local-ai-mcp:latest
+
+      - name: Publish to npm
+        if: ${{ github.event.inputs.publish_npm == 'true' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cd packages/local-ai-mcp
+          npm publish dist/*.tgz --access public
+
+      - name: Push Docker to GHCR
+        if: ${{ github.event.inputs.publish_docker == 'true' }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ./packages/local-ai-mcp
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/local-ai-mcp:latest
+        env:
+          CR_PAT: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Create GitHub Release (draft)
+        uses: softprops/action-gh-release@v1
+        with:
+          files: packages/local-ai-mcp/dist/*.tgz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

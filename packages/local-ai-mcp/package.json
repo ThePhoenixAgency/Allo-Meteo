@@ -1,0 +1,19 @@
+{
+  "name": "local-ai-mcp",
+  "version": "0.1.0",
+  "description": "Lightweight reusable MCP-like adapter to probe local LLM/TTS servers, expose a simple HTTP API and rate-limiting",
+  "main": "server.js",
+  "type": "module",
+  "bin": { "local-ai-mcp": "./server.js" },
+  "scripts": {
+    "start": "node server.js",
+    "lint": "echo 'no lint configured'",
+    "pack": "mkdir -p dist && npm pack --pack-destination dist",
+    "docker-build": "docker build -t local-ai-mcp:latest .",
+    "docker-save": "mkdir -p dist && docker build -t local-ai-mcp:latest . && docker save local-ai-mcp:latest -o dist/local-ai-mcp-docker.tar"
+  },
+  "files": ["server.js","probe.js","README.md","Dockerfile","SECURITY.md"],
+  "keywords": ["mcp","local-ai","lm-studio","tts","probe"],
+  "author": "ThePhoenixAgency",
+  "license": "MIT"
+}
