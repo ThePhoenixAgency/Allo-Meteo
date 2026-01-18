@@ -46,13 +46,7 @@ function requireSecret(req, body) {
  * - Keep handlers small and return explicit JSON responses.
  * - Rate-limiting is per-client+host key and intentionally conservative; tune TEXT_COOLDOWN_MS/TTS_COOLDOWN_MS as needed.
  */
-function requireSecret(req, body) {
-  if (!MCP_SECRET) return true; // not enabled
-  const header = req.headers['x-mcp-secret'];
-  if (header && String(header) === MCP_SECRET) return true;
-  if (body && body.secret && body.secret === MCP_SECRET) return true;
-  return false;
-}
+
 function setHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');

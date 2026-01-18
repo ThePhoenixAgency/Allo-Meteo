@@ -1,0 +1,128 @@
+name: Auto update deps & base image
+
+on:
+  schedule:
+    - cron: '0 */12 * * *' # twice daily (every 12 hours)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-update:
+    name: Daily auto-update (silent commit when safe)
+    runs-on: ubuntu-latest
+    env:
+      PACKAGE_DIR: packages/local-ai-mcp
+      DOCKERFILE_PATH: packages/local-ai-mcp/Dockerfile
+      BASE_IMAGE: node:25-slim
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run npm audit-fix (production-only)
+        working-directory: ${{ env.PACKAGE_DIR }}
+        run: |
+          npm ci --no-audit --no-fund || true
+          # attempt non-breaking fixes and update lockfile only
+          npm audit fix --only=prod --package-lock-only || true
+
+      - name: Commit package-lock if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ${PACKAGE_DIR}/package-lock.json ${PACKAGE_DIR}/package.json || true
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(auto): npm audit fixes (daily)" || true
+          else
+            echo "no package changes"
+          fi
+
+      - name: Pull latest base image and compute digest
+        run: |
+          docker pull ${{ env.BASE_IMAGE }}
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ env.BASE_IMAGE }} | cut -d'@' -f2 || true)
+          echo "DIGEST=${DIGEST}" >> $GITHUB_ENV
+
+      - name: Pin Dockerfile BASE_IMAGE to digest (if available)
+        if: env.DIGEST != ''
+        run: |
+          FILE=${{ env.DOCKERFILE_PATH }}
+          echo "Pinning ${FILE} -> ${BASE_IMAGE}@${DIGEST}"
+          # replace ARG or FROM that references node:25-slim
+          perl -0777 -pe "s{ARG\s+BASE_IMAGE=.*}{ARG BASE_IMAGE=${{ env.BASE_IMAGE }}@${DIGEST}}smi" -i $FILE
+          perl -0777 -pe "s{FROM\s+node:25-slim}{FROM \${BASE_IMAGE}}smi" -i $FILE || true
+          git add $FILE
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(auto): pin base image to ${DIGEST} (daily)" || true
+          else
+            echo "no Dockerfile changes"
+          fi
+
+      - name: Build image (for scan)
+        run: |
+          docker build -f ${{ env.DOCKERFILE_PATH }} -t local-ai-mcp:daily-scan ${{ env.PACKAGE_DIR }}
+
+      - name: Trivy scan (fail only on critical)
+        uses: aquasecurity/trivy-action@v2
+        with:
+          image-ref: local-ai-mcp:daily-scan
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL'
+
+      - name: Run additional checks (npm audit summary)
+        working-directory: ${{ env.PACKAGE_DIR }}
+        run: |
+          npm audit --production --audit-level=high || echo 'audit returned non-zero (see above)'
+
+      - name: Push changes to main (silent)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # push only if there are commits
+          git show --name-only --pretty="" HEAD~1..HEAD || true
+          if git rev-parse --verify origin/main >/dev/null 2>&1; then
+            git push origin HEAD:main || echo 'push failed (permissions?)'
+          else
+            echo 'origin/main not found'
+          fi
+
+      - name: Create issue for remaining high/critical vulns
+        if: failure()
+        uses: peter-evans/create-issue-from-file@v4
+        with:
+          title: "[auto-update] Vulnerabilities detected in local-ai-mcp (daily)"
+          content-file: ./packages/local-ai-mcp/SECURITY.md
+          labels: automated,security
+
+  dependabot-enable:
+    name: Ensure Dependabot updates Docker & npm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create/ensure dependabot config
+        run: |
+          mkdir -p .github
+          cat > .github/dependabot.yml <<'YAML'
+          version: 2
+          updates:
+            - package-ecosystem: "npm"
+              directory: "/packages/local-ai-mcp"
+              schedule:
+                interval: "daily"
+            - package-ecosystem: "docker"
+              directory: "/"
+              schedule:
+                interval: "daily"
+          YAML
+          git add .github/dependabot.yml || true
+          git commit -m "chore(auto): ensure dependabot daily for npm & docker" || true
+          git push origin HEAD:main || true

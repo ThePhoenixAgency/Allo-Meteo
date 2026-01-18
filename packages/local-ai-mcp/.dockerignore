@@ -1,4 +1,14 @@
 node_modules
-npm-debug.log
-.DS_Store
+dist
 .git
+*.log
+*.tgz
+.DS_Store
+.env
+
+# keep only files that are explicitly listed in package.json `files` or needed at runtime
+!server.js
+!probe.js
+!package.json
+!README.md
+!Dockerfile
