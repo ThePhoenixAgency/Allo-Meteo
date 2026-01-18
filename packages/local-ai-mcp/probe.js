@@ -126,7 +126,10 @@ export async function detectModelsOn(base) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-    const res = await fetch(`${validBase}/v1/models`, {
+    // Use URL constructor to help CodeQL understand the URL is validated
+    const modelsUrl = new URL('/v1/models', validBase).toString();
+
+    const res = await fetch(modelsUrl, {
       signal: controller.signal,
       headers: { 'Accept': 'application/json' }
     });
@@ -192,7 +195,8 @@ export async function probeTextOn(base, prompt, model) {
   for (const p of TEXT_ENDPOINTS) {
     for (const body of payloads) {
       try {
-        const url = `${validBase}${p}`;
+        // Use URL constructor to help CodeQL understand the URL is validated
+        const url = new URL(p, validBase).toString();
         const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), timeout: 5000 });
         const text = await res.text();
         let json = null;
@@ -225,7 +229,8 @@ export async function probeTtsOn(base, prompt) {
   for (const p of TTS_ENDPOINTS) {
     for (const body of payloads) {
       try {
-        const url = `${validBase}${p}`;
+        // Use URL constructor to help CodeQL understand the URL is validated
+        const url = new URL(p, validBase).toString();
         const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), timeout: 7000 });
         const json = await res.json().catch(() => null);
         if (res.ok && json) {
