@@ -402,6 +402,39 @@ const App = () => {
     analytics: false,
   });
 
+  const fetchExpertData = async () => {
+    setGlobalLoading(true);
+    try {
+      const now = Date.now();
+      if (now - (textCooldownRef.current || 0) < TEXT_COOLDOWN_MS) {
+        const remaining = TEXT_COOLDOWN_MS - (now - (textCooldownRef.current || 0));
+        setLastPerf((p:any) => ({ ...p, rateLimitedUntil: Date.now() + remaining }));
+        console.warn('Skipped fetchExpertData due to rate limit', remaining);
+        setGlobalLoading(false);
+        return;
+      }
+      textCooldownRef.current = now;
+
+      const prompt = buildExpertPrompt();
+      const res = await fetchExpertTextWithFallback(prompt);
+      const rawText = res.text || '';
+      const cleanText = rawText.replace(/[\*#_>`~]/g, '');
+      console.info('Expert text fetched. excerpt:', cleanText.slice(0,400));
+      console.debug('Expert sources:', res.sources, 'perf:', res.perf);
+      setExpertData({ text: cleanText, sources: res.sources });
+      
+      // Sauvegarder timestamp pour cache
+      localStorage.setItem('lastAIFetch', Date.now().toString());
+      
+      if (res.perf) setLastPerf((p:any) => ({ ...p, textLatencyMs: res.perf.latencyMs, model: res.perf.model, tokens: res.perf.tokens }));
+    } catch (error) {
+      console.error('Expert fetch failed:', error);
+      setExpertData({ text: 'Analyse météorologique temporairement indisponible. Veuillez rafraîchir la page.', sources: [] });
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
+
   useEffect(() => {
     try {
       if (selectedModel && selectedModel.trim()) localStorage.setItem('allo_meteo_model', selectedModel.trim());
@@ -548,7 +581,11 @@ const App = () => {
       }
     }
 
-    localStoraAllCookies = () => {
+    setCookie('allo_meteo_profile', JSON.stringify(profile));
+    setUserProfile(profile);
+  };
+
+  const acceptAllCookies = () => {
     const prefs = { essential: true, functional: true, analytics: true };
     setCookiePreferences(prefs);
     setCookie('allo_meteo_consent', JSON.stringify(prefs));
@@ -572,13 +609,7 @@ const App = () => {
     setShowCookieSettings(false);
     if (cookiePreferences.functional) {
       initUserProfile();
-    }rofil utilisateur chargé:', profile.city, profile.visitCount, 'visites');
-  };
-
-  const acceptCookies = () => {
-    setCookie('allo_meteo_consent', 'accepted');
-    setShowCookieBanner(false);
-    initUserProfile();
+    }
   };
 
   useEffect(() => {
@@ -625,41 +656,6 @@ const App = () => {
     };
   }, []);
 
-  const fetchExpertData = async () => {
-    setGlobalLoading(true);
-    try {
-      const now = Date.now();
-      if (now - (textCooldownRef.current || 0) < TEXT_COOLDOWN_MS) {
-        const remaining = TEXT_COOLDOWN_MS - (now - (textCooldownRef.current || 0));
-        setLastPerf((p:any) => ({ ...p, rateLimitedUntil: Date.now() + remaining }));
-        console.warn('Skipped fetchExpertData due to rate limit', remaining);
-        setGlobalLoading(false);
-        return;
-      }
-      textCooldownRef.current = now;
-
-      const prompt = buildExpertPrompt();
-      const res = await fetchExpertTextWithFallback(prompt);
-      const rawText = res.text || '';
-      const cleanText = rawText.replace(/[\*#_>`~]/g, '');
-      console.info('Expert text fetched. excerpt:', cleanText.slice(0,400));
-      console.debug('Expert sources:', res.sources, 'perf:', res.perf);
-      setExpertData({ text: cleanText, sources: res.sources });
-      
-      // Sauvegarder timestamp pour cache
-      localStorage.setItem('lastAIFetch', Date.now().toString());
-      
-      if (res.perf) setLastPerf((p:any) => ({ ...p, textLatencyMs: res.perf.latencyMs, model: res.perf.model, tokens: res.perf.tokens }));
-    } catch (error) {
-      console.error("Erreur API:", error);
-      if (error && typeof (error as any).message === 'string' && (error as any).message.includes('Rate limited')) {
-        setLastPerf((p:any) => ({ ...p, rateLimitedUntil: Date.now() + TEXT_COOLDOWN_MS }));
-      }
-    } finally {
-      setGlobalLoading(false);
-    }
-  };
-
   const getSection = (key: string) => {
     if (!expertData?.text) return "";
     const parts = expertData.text.split(`[${key}]`);
@@ -692,8 +688,8 @@ const App = () => {
     setLoading(true);
     try {
       const promptText = `Tu es l'assistant Allo-Météo. INTERDICTION ABSOLUE : ne dis pas "Phoenix Project" ni "réel". 
-      CONSIGNE PHONÉTIQUE : Prononce TRÈS DISTINCTEMENT les S finaux et les terminaisons. 
-      Dis clairement : LES DEUZZZZ ALPESSSS, BOURGGGG D'OISANSSSS, OZZZZ EN OISANSSSS, ALPE D'HUEZZZZ.
+      CONSIGNE PHONÉTIQUE : Prononce TRÈS DISTINCTEMENT les terminaisons. 
+      Dis clairement : LES DEUZZZZ ALPEs, BOUR D'OISAN, OZZZZ EN OISAN, ALPE D'HUEZZZZ.
       Données : ${expertData?.text}`;
       const { audio: base64Audio, perf } = await fetchBulletinAudioWithFallback(promptText);
       if (!base64Audio) { setLoading(false); return; }
@@ -733,7 +729,66 @@ const App = () => {
     : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte en cours" : "IA indisponible"));
 
   const manualTemperature = manualWeather?.temperature !== undefined ? manualWeather.temperature.toFixed(1) : null;
-  const manualHumidityVConforme */}
+  const manualHumidityValue = manualWeather?.humidity ?? null;
+  const manualRainValue = manualWeather?.precipitation ?? null;
+  const manualPressureValue = manualWeather?.pressure ?? null;
+
+  // Prioriser Prevision-Meteo sur les valeurs par défaut
+  const currentTemp = manualTemperature || meteoText.match(/(\-?\d+)\s?°/)?.[1] || "...";
+  const humidity = (manualHumidityValue !== null ? Math.round(manualHumidityValue).toString() : meteoText.match(/(\d+)\s?%/)?.[1] || "...") + "%";
+  const rain = (manualRainValue !== null ? manualRainValue.toFixed(1) : meteoText.match(/(\d+[,.]?\d*)\s?mm/)?.[1] || "...") + " mm";
+  const pressure = (manualPressureValue !== null ? manualPressureValue.toFixed(0) : meteoText.match(/(\d+)\s?hPa/)?.[1] || "...") + " hPa";
+
+  const hasInversionText = inversion.toLowerCase().includes("oui") || inversion.toLowerCase().includes("active") || inversion.toLowerCase().includes("présente") || inversion.toLowerCase().includes("yes");
+  const hasInversion = hasInversionText || (manualWeather && manualWeather.temperature <= 2);
+
+  // Calculer phase de lune actuelle
+  const getMoonPhase = (): string => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    
+    // Algorithme simplifié pour calculer la phase de lune
+    let c = 0, e = 0, jd = 0, b = 0;
+    if (month < 3) {
+      const yearAdjusted = year - 1;
+      const monthAdjusted = month + 12;
+      c = Math.floor(yearAdjusted / 100);
+      e = c / 4;
+      jd = 365.25 * (yearAdjusted + 4716);
+      b = Math.floor(30.6001 * (monthAdjusted + 1));
+    } else {
+      c = Math.floor(year / 100);
+      e = Math.floor(c / 4);
+      jd = Math.floor(365.25 * (year + 4716));
+      b = Math.floor(30.6001 * (month + 1));
+    }
+    
+    const fullJD = jd + b + day - 1524.5;
+    const daysSinceNew = (fullJD - 2451550.1) % 29.53059;
+    const phase = daysSinceNew / 29.53059;
+    
+    if (phase < 0.0625) return "🌑 Nouvelle Lune";
+    if (phase < 0.1875) return "🌒 Premier Croissant";
+    if (phase < 0.3125) return "🌓 Premier Quartier";
+    if (phase < 0.4375) return "🌔 Gibbeuse Croissante";
+    if (phase < 0.5625) return "🌕 Pleine Lune";
+    if (phase < 0.6875) return "🌖 Gibbeuse Décroissante";
+    if (phase < 0.8125) return "🌗 Dernier Quartier";
+    if (phase < 0.9375) return "🌘 Dernier Croissant";
+    return "🌑 Nouvelle Lune";
+  };
+
+  const manualSummaryLine = manualWeather
+    ? `Prevision-Meteo.ch ${new Date(manualWeather.timestamp).toLocaleTimeString('fr-FR')} • ${manualWeather.temperature.toFixed(1)}°C • Vent ${manualWeather.windspeed.toFixed(0)} km/h`
+    : '';
+
+  return (
+    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans pb-16">
+      <style>{spinAnimation}</style>
+      
+      {/* Bandeau RGPD Conforme */}
       {showCookieBanner && !showCookieSettings && (
         <div className="fixed bottom-0 left-0 right-0 bg-slate-900/98 backdrop-blur-xl text-white p-6 z-[9999] border-t-4 border-blue-500 shadow-2xl">
           <div className="max-w-7xl mx-auto">
@@ -900,27 +955,6 @@ const App = () => {
                 className="flex-1 px-6 py-4 bg-blue-600 hover:bg-blue-700 rounded-xl font-black uppercase text-sm transition-all shadow-xl"
               >
                 Enregistrer mes Choix
-                <h3 className="font-black text-lg mb-2 uppercase tracking-tight">🍪 Cookies Indispensables</h3>
-                <p className="text-sm text-slate-300 leading-relaxed">
-                  Nous utilisons des <strong>cookies essentiels</strong> pour mémoriser vos préférences (localisation, modèle IA, historique), 
-                  améliorer votre expérience et vous reconnaître lors de vos prochaines visites. 
-                  Vos données sont <strong>stockées localement</strong> et conservées <strong>13 mois maximum</strong> (conformité RGPD).
-                </p>
-                <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold">
-                  <span className="bg-blue-500/30 px-3 py-1 rounded-full">📍 Localisation</span>
-                  <span className="bg-blue-500/30 px-3 py-1 rounded-full">🔐 Token Utilisateur</span>
-                  <span className="bg-blue-500/30 px-3 py-1 rounded-full">💾 Préférences</span>
-                  <span className="bg-blue-500/30 px-3 py-1 rounded-full">📊 Statistiques d'usage</span>
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={acceptCookies}
-                className="px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-2xl font-black uppercase text-sm transition-all shadow-xl active:scale-95 flex items-center gap-2"
-              >
-                <Cookie className="w-5 h-5" />
-                Accepter
               </button>
             </div>
           </div>
@@ -1070,7 +1104,7 @@ const App = () => {
           <section className="bg-indigo-950 rounded-[3rem] p-8 text-white shadow-2xl relative overflow-hidden text-center">
             <h3 className="text-xl font-black mb-6 uppercase text-indigo-300 flex items-center justify-center gap-4"><MoonStar className="w-7 h-7" /> LUNE</h3>
             <div className="bg-indigo-900/40 p-5 rounded-full border-2 border-indigo-800 shadow-xl inline-block mb-4"><Moon className="w-12 h-12 text-indigo-100" /></div>
-            <p className="text-2xl font-black uppercase text-white">{getSection('LUNE') || "En cours..."}</p>
+            <p className="text-2xl font-black uppercase text-white">{getSection('LUNE') || getMoonPhase()}</p>
           </section>
           <section className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
             <h3 className="text-xl font-black mb-8 uppercase text-blue-900 flex items-center gap-5"><Mail className="w-7 h-7 text-blue-600" /> BULLETIN DE 07H00</h3>
