@@ -107,39 +107,6 @@ export async function probeTextOn(base, prompt, model) {
   throw new Error('No working text endpoint');
 }
 
-export async function probeTextOn(base, prompt, model) {
-  base = base.replace(/\/$/, '');
-  const payloads = [
-    ...(model ? [{ model, input: prompt }, { model, messages: [{ role: 'user', content: prompt }] }] : []),
-    { prompt }, { input: prompt }, { inputs: prompt }, { text: prompt }, { messages: [{ role: 'user', content: prompt }] }, { model: 'default', prompt }
-  ];
-
-  const t0 = Date.now();
-  for (const p of TEXT_ENDPOINTS) {
-    for (const body of payloads) {
-      try {
-        const url = `${base}${p}`;
-        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), timeout: 5000 });
-        const text = await res.text();
-        let json = null;
-        try { json = JSON.parse(text); } catch (e) { json = null; }
-        if (res.ok && json) {
-          const extracted = extractTextFromResponse(json) || extractTextFromResponse(json.candidates?.[0]) || extractTextFromResponse(json.choices?.[0]);
-          if (extracted) {
-            const tokens = json?.usage?.total_tokens || json?.usage?.total || json?.token_count || Math.max(1, Math.round((extracted.split(/\s+/).length) / 0.75));
-            const perf = { latencyMs: Date.now() - t0, tokens };
-            return { text: extracted, sources: json.sources || json.metadata || [], perf, endpoint: url };
-          }
-        }
-      } catch (e) {
-        // ignore and continue
-      }
-      // avoid hammering
-      await wait(50);
-    }
-  }
-  throw new Error('No working text endpoint');
-}
 
 export async function probeTtsOn(base, prompt) {
   base = base.replace(/\/$/, '');

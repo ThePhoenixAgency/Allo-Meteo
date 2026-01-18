@@ -11,7 +11,7 @@ import {
   Pause, Car, Construction, Navigation, Siren,
   Sunrise, Sunset, MoonStar, CalendarDays, Sparkles,
   Ticket, Github, User, ArrowUpRight, ArrowDownRight,
-  Waves as FloodIcon, Zap as SeismicIcon
+  Waves as FloodIcon, Zap as SeismicIcon, Cookie, Shield
 } from 'lucide-react';
 import { GoogleGenAI, Modality } from "@google/genai";
 
@@ -28,6 +28,37 @@ const LOCATION_COORDS = { lat: 45.0053, lon: 6.0748 };
 const hasGeminiKey = Boolean(process.env.API_KEY);
 const TEXT_COOLDOWN_MS = 5000;
 const TTS_COOLDOWN_MS = 5000;
+const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes pour économiser les tokens Gemini
+const USER_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - considère l'utilisateur inactif après ce délai
+const COOKIE_EXPIRY_DAYS = 395; // 13 mois (conformité RGPD max)
+
+// Gestion cookies RGPD
+const setCookie = (name: string, value: string, days: number = COOKIE_EXPIRY_DAYS) => {
+  const d = new Date();
+  d.setTime(d.getTime() + days * 24 * 60 * 60 * 1000);
+  document.cookie = `${name}=${value};expires=${d.toUTCString()};path=/;SameSite=Strict`;
+};
+
+const getCookie = (name: string): string | null => {
+  const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+  return match ? match[2] : null;
+};
+
+const deleteCookie = (name: string) => {
+  document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
+};
+
+type UserProfile = {
+  userId: string;
+  city?: string;
+  country?: string;
+  ip?: string;
+  lat?: number;
+  lon?: number;
+  visitCount: number;
+  lastVisit: string;
+  preferences?: any;
+};
 
 type ManualWeather = {
   temperature: number;
@@ -110,7 +141,8 @@ const buildExpertPrompt = () => {
       3. STATIONS: Températures actuelles (°C) EXCLUSIVEMENT pour :
       Alpe d'Huez, Les 2 Alpes, Vaujany, Oz-en-Oisans, Saint-Christophe-en-Oisans, Villard-Reculas.
       FORMAT STRICT STATIONS: Une station par ligne, "Nom station : Valeur°C".
-      4. RISQUES: Sismique et Crues.
+      4. RISQUES: Analyse PRÉDICTIVE basée sur météo actuelle. Niveau sismique (Faible/Modéré/Élevé), Crues (Vert/Jaune/Orange/Rouge).
+      Si AUCUN RISQUE ACTIF: Écris "Aucune alerte en cours".
       5. EVENEMENTS: 3 évènements (1 par ligne).
       6. LUNE: Phase.
       BALISES: [METEO], [ROUTE], [STATIONS], [RISQUES], [EVENEMENTS], [LUNE], [INVERSION]. RÉPONSE TRÈS COURTE ET RAPIDE SANS BLA-BLA.`;
@@ -359,6 +391,16 @@ const App = () => {
   const [mcpHost, setMcpHost] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_host') || LOCAL_AI_BASE_URLS[0]) : LOCAL_AI_BASE_URLS[0]));
   const [mcpSecret, setMcpSecret] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_secret') || '') : ''));
   const [mcpStatus, setMcpStatus] = useState<any>(null);
+  
+  // État RGPD
+  const [showCookieBanner, setShowCookieBanner] = useState<boolean>(false);
+  const [showCookieSettings, setShowCookieSettings] = useState<boolean>(false);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [cookiePreferences, setCookiePreferences] = useState({
+    essential: true, // Toujours true, non modifiable
+    functional: false,
+    analytics: false,
+  });
 
   useEffect(() => {
     try {
@@ -384,34 +426,32 @@ const App = () => {
   const fetchManualWeather = async () => {
     try {
       setManualLoading(true);
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${LOCATION_COORDS.lat}&longitude=${LOCATION_COORDS.lon}&current_weather=true&hourly=relativehumidity_2m,pressure_msl,precipitation&timezone=Europe%2FParis`;
+      const url = `https://www.prevision-meteo.ch/services/json/lat=${LOCATION_COORDS.lat}lng=${LOCATION_COORDS.lon}`;
       const response = await fetch(url);
       if (!response.ok) {
-        throw new Error(`Open-Meteo répond ${response.status}`);
+        throw new Error(`Prevision-Meteo répond ${response.status}`);
       }
       const data = await response.json();
-      const current = data.current_weather;
-      const hourly = data.hourly || {};
-      let humidity: number | null = null;
-      let pressure: number | null = null;
-      let precipitation: number | null = null;
-      if (current && hourly.time) {
-        const timeIndex = hourly.time.indexOf(current.time);
-        if (timeIndex !== -1) {
-          humidity = hourly.relativehumidity_2m?.[timeIndex] ?? null;
-          pressure = hourly.pressure_msl?.[timeIndex] ?? null;
-          precipitation = hourly.precipitation?.[timeIndex] ?? null;
-        }
-      }
+      const current = data.current_condition;
+      
       if (current) {
+        // Convertir la direction du vent en degrés
+        const windDirMap: {[key: string]: number} = {
+          'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
+          'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
+          'S': 180, 'SSW': 202.5, 'SW': 225, 'WSW': 247.5,
+          'W': 270, 'WNW': 292.5, 'NW': 315, 'NNW': 337.5
+        };
+        const windDirection = windDirMap[current.wnd_dir] ?? 0;
+        
         setManualWeather({
-          temperature: current.temperature,
-          windspeed: current.windspeed,
-          winddirection: current.winddirection,
-          humidity,
-          pressure,
-          precipitation,
-          timestamp: current.time,
+          temperature: parseFloat(current.tmp),
+          windspeed: parseFloat(current.wnd_spd),
+          winddirection: windDirection,
+          humidity: parseFloat(current.humidity),
+          pressure: parseFloat(current.pressure),
+          precipitation: 0, // API ne fournit pas les précipitations actuelles
+          timestamp: new Date().toISOString(),
         });
       }
     } catch (error) {
@@ -429,7 +469,8 @@ const App = () => {
         const json = await res.json().catch(() => null);
         if (!json) continue;
         let models: string[] = [];
-        if (Array.isArray(json.models)) models = json.models.map((m:any) => m.id).filter(Boolean);
+        if (Array.isArray(json.data)) models = json.data.map((m:any) => m.id).filter(Boolean);
+        else if (Array.isArray(json.models)) models = json.models.map((m:any) => m.id).filter(Boolean);
         else if (Array.isArray(json)) models = json.map((m:any) => (m.id || m)).filter(Boolean);
         if (models.length) { setAvailableModels(models); setAiEndpoint(base); console.info('Detected models at', base, models.slice(0,10)); return; }
       } catch (e) { console.debug('detectLocalModels failed for', base, e); }
@@ -438,13 +479,148 @@ const App = () => {
     setAiEndpoint(null);
   };
 
+  // Marque l'activité utilisateur pour déclencher les requêtes API
+  const markUserActivity = () => {
+    localStorage.setItem('lastUserActivity', Date.now().toString());
+    console.info('👤 Activité utilisateur détectée');
+  };
+
+  // Vérifie si un utilisateur est actif (interaction récente)
+  const isUserActive = (): boolean => {
+    const lastActivity = localStorage.getItem('lastUserActivity');
+    if (!lastActivity) return false;
+    const elapsed = Date.now() - parseInt(lastActivity);
+    return elapsed < USER_SESSION_TIMEOUT_MS;
+  };
+
+  // Initialiser profil utilisateur RGPD
+  const initUserProfile = async () => {
+    const consent = getCookie('allo_meteo_consent');
+    if (!consent) {
+      setShowCookieBanner(true);
+      return;
+    }
+
+    // Vérifier si les cookies fonctionnels sont acceptés
+    let prefs = { essential: true, functional: false, analytics: false };
+    try {
+      prefs = JSON.parse(consent);
+    } catch {
+      // Ancien format (simple string "accepted")
+      prefs = { essential: true, functional: true, analytics: true };
+    }
+    setCookiePreferences(prefs);
+
+    if (!prefs.functional) {
+      console.info('🚫 Cookies fonctionnels refusés - pas de profil utilisateur');
+      return;
+    }
+
+    let profile: UserProfile | null = null;
+    const savedProfile = localStorage.getItem('allo_meteo_user_profile');
+    
+    if (savedProfile) {
+      profile = JSON.parse(savedProfile);
+      profile!.visitCount = (profile!.visitCount || 0) + 1;
+      profile!.lastVisit = new Date().toISOString();
+    } else {
+      // Géolocalisation via ipapi.co (gratuit, pas de clé API)
+      try {
+        const geoRes = await fetch('https://ipapi.co/json/');
+        const geoData = await geoRes.json();
+        profile = {
+          userId: crypto.randomUUID(),
+          city: geoData.city || 'Inconnu',
+          country: geoData.country_name || 'Inconnu',
+          ip: geoData.ip || 'Inconnu',
+          lat: geoData.latitude || LOCATION_COORDS.lat,
+          lon: geoData.longitude || LOCATION_COORDS.lon,
+          visitCount: 1,
+          lastVisit: new Date().toISOString(),
+        };
+      } catch (e) {
+        console.warn('Géolocalisation échouée', e);
+        profile = {
+          userId: crypto.randomUUID(),
+          visitCount: 1,
+          lastVisit: new Date().toISOString(),
+        };
+      }
+    }
+
+    localStoraAllCookies = () => {
+    const prefs = { essential: true, functional: true, analytics: true };
+    setCookiePreferences(prefs);
+    setCookie('allo_meteo_consent', JSON.stringify(prefs));
+    setShowCookieBanner(false);
+    setShowCookieSettings(false);
+    initUserProfile();
+  };
+
+  const rejectNonEssentialCookies = () => {
+    const prefs = { essential: true, functional: false, analytics: false };
+    setCookiePreferences(prefs);
+    setCookie('allo_meteo_consent', JSON.stringify(prefs));
+    setShowCookieBanner(false);
+    setShowCookieSettings(false);
+    // Ne pas initialiser le profil utilisateur si refus
+  };
+
+  const saveCustomCookies = () => {
+    setCookie('allo_meteo_consent', JSON.stringify(cookiePreferences));
+    setShowCookieBanner(false);
+    setShowCookieSettings(false);
+    if (cookiePreferences.functional) {
+      initUserProfile();
+    }rofil utilisateur chargé:', profile.city, profile.visitCount, 'visites');
+  };
+
+  const acceptCookies = () => {
+    setCookie('allo_meteo_consent', 'accepted');
+    setShowCookieBanner(false);
+    initUserProfile();
+  };
+
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    
+    // Init RGPD et profil utilisateur
+    initUserProfile();
+    
+    // Marquer l'activité au chargement de la page
+    markUserActivity();
+    
+    // Check cache - si données récentes, ne pas appeler l'API
+    const lastFetch = localStorage.getItem('lastAIFetch');
+    const cacheExpired = !lastFetch || (Date.now() - parseInt(lastFetch)) > AUTO_REFRESH_INTERVAL_MS;
+    
+    // Toujours fetch la météo basique (pas coûteux)
     fetchManualWeather();
     detectLocalModels();
-    fetchExpertData();
+    
+    // Fetch IA seulement si utilisateur actif ET cache expiré
+    if (isUserActive() && cacheExpired) {
+      console.info('🚀 Chargement IA pour utilisateur actif');
+      fetchExpertData();
+    } else if (!isUserActive()) {
+      console.info('💤 Pas d\'utilisateur actif - requêtes IA désactivées');
+    } else {
+      console.info('📦 Utilisation cache IA - expire dans', Math.round((AUTO_REFRESH_INTERVAL_MS - (Date.now() - parseInt(lastFetch))) / 60000), 'min');
+    }
+    
+    // Auto-refresh toutes les AUTO_REFRESH_INTERVAL_MS (mais seulement si utilisateur actif)
+    const refreshTimer = setInterval(() => {
+      if (isUserActive()) {
+        console.info('🔄 Auto-refresh IA (utilisateur actif)');
+        fetchExpertData();
+      } else {
+        console.info('⏸️ Auto-refresh annulé (pas d\'utilisateur actif)');
+      }
+    }, AUTO_REFRESH_INTERVAL_MS);
+    
     return () => {
       clearInterval(timer);
+      clearInterval(refreshTimer);
       stopAudio();
     };
   }, []);
@@ -469,6 +645,10 @@ const App = () => {
       console.info('Expert text fetched. excerpt:', cleanText.slice(0,400));
       console.debug('Expert sources:', res.sources, 'perf:', res.perf);
       setExpertData({ text: cleanText, sources: res.sources });
+      
+      // Sauvegarder timestamp pour cache
+      localStorage.setItem('lastAIFetch', Date.now().toString());
+      
       if (res.perf) setLastPerf((p:any) => ({ ...p, textLatencyMs: res.perf.latencyMs, model: res.perf.model, tokens: res.perf.tokens }));
     } catch (error) {
       console.error("Erreur API:", error);
@@ -500,6 +680,7 @@ const App = () => {
   };
 
   const playWeatherBulletin = async () => {
+    markUserActivity(); // Interaction utilisateur
     if (isPlaying) { stopAudio(); return; }
     const now = Date.now();
     if (now - (ttsCooldownRef.current || 0) < TTS_COOLDOWN_MS) {
@@ -538,26 +719,214 @@ const App = () => {
   const risquesText = getSection('RISQUES');
   const inversion = getSection('INVERSION');
 
+  // Gestion des états IA
+  const hasAnyAIData = expertData?.text?.trim().length > 0;
+  const hasRisquesData = risquesText.trim().length > 0;
+  
+  // États: Chargement initial, IA a répondu, IA indisponible
+  const isLoading = !hasAnyAIData && globalLoading;
+  const risqueSismique = hasRisquesData 
+    ? (risquesText.match(/sismique\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Aucune alerte en cours")
+    : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte en cours" : "IA indisponible"));
+  const risqueCrues = hasRisquesData 
+    ? (risquesText.match(/crues\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Aucune alerte en cours")
+    : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte en cours" : "IA indisponible"));
+
   const manualTemperature = manualWeather?.temperature !== undefined ? manualWeather.temperature.toFixed(1) : null;
-  const manualHumidityValue = manualWeather?.humidity ?? null;
-  const manualRainValue = manualWeather?.precipitation ?? null;
-  const manualPressureValue = manualWeather?.pressure ?? null;
+  const manualHumidityVConforme */}
+      {showCookieBanner && !showCookieSettings && (
+        <div className="fixed bottom-0 left-0 right-0 bg-slate-900/98 backdrop-blur-xl text-white p-6 z-[9999] border-t-4 border-blue-500 shadow-2xl">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-start gap-4 mb-6">
+              <div className="bg-blue-500 p-3 rounded-xl flex-shrink-0">
+                <Shield className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-black text-xl mb-3 uppercase tracking-tight">🍪 Gestion des Cookies</h3>
+                <p className="text-sm text-slate-300 leading-relaxed mb-4">
+                  Nous utilisons des cookies pour améliorer votre expérience. Les <strong>cookies essentiels</strong> sont 
+                  nécessaires au fonctionnement du site. Vous pouvez accepter ou refuser les cookies <strong>fonctionnels</strong> 
+                  et <strong>analytiques</strong>.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                  <div className="bg-green-500/20 border border-green-500/50 p-3 rounded-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <CheckCircle2 className="w-4 h-4 text-green-400" />
+                      <strong className="text-green-400">ESSENTIELS</strong>
+                      <span className="text-[10px] text-slate-400">(obligatoire)</span>
+                    </div>
+                    <p className="text-slate-300">Sécurité, session, préférences de base</p>
+                  </div>
+                  <div className="bg-blue-500/20 border border-blue-500/50 p-3 rounded-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <User className="w-4 h-4 text-blue-400" />
+                      <strong className="text-blue-400">FONCTIONNELS</strong>
+                    </div>
+                    <p className="text-slate-300">Géolocalisation, token utilisateur, historique visites</p>
+                  </div>
+                  <div className="bg-purple-500/20 border border-purple-500/50 p-3 rounded-xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Activity className="w-4 h-4 text-purple-400" />
+                      <strong className="text-purple-400">ANALYTIQUES</strong>
+                    </div>
+                    <p className="text-slate-300">Statistiques d'usage (désactivé actuellement)</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex flex-col sm:flex-row gap-3 justify-end">
+              <button
+                onClick={rejectNonEssentialCookies}
+                className="px-6 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold uppercase text-sm transition-all border border-slate-600"
+              >
+                Refuser Tout
+              </button>
+              <button
+                onClick={() => setShowCookieSettings(true)}
+                className="px-6 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold uppercase text-sm transition-all border border-blue-500"
+              >
+                Personnaliser
+              </button>
+              <button
+                onClick={acceptAllCookies}
+                className="px-8 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl font-black uppercase text-sm transition-all shadow-xl active:scale-95 flex items-center justify-center gap-2"
+              >
+                <Cookie className="w-5 h-5" />
+                Tout Accepter
+              </button>
+            </div>
+            
+            <p className="text-[10px] text-slate-500 mt-4 text-center">
+              Conservation max: <strong>13 mois</strong> (conformité RGPD) • 
+              Données stockées localement • 
+              <a href="#privacy" className="underline hover:text-white ml-1">Politique de confidentialité</a>
+            </p>
+          </div>
+        </div>
+      )}
 
-  const currentTemp = meteoText.match(/(\-?\d+)\s?°/)?.[1] || manualTemperature || "12";
-  const humidity = (meteoText.match(/(\d+)\s?%/)?.[1] || (manualHumidityValue !== null ? Math.round(manualHumidityValue).toString() : "65")) + "%";
-  const rain = (meteoText.match(/(\d+[,.]?\d*)\s?mm/)?.[1] || (manualRainValue !== null ? manualRainValue.toFixed(1) : "0")) + " mm";
-  const pressure = (meteoText.match(/(\d+)\s?hPa/)?.[1] || (manualPressureValue !== null ? manualPressureValue.toFixed(0) : "1018")) + " hPa";
+      {/* Panneau de personnalisation */}
+      {showCookieSettings && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[10000] flex items-center justify-center p-4">
+          <div className="bg-slate-900 rounded-3xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-8 border-4 border-blue-500 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-black uppercase text-white flex items-center gap-3">
+                <Shield className="w-8 h-8 text-blue-500" />
+                Paramètres des Cookies
+              </h2>
+              <button onClick={() => setShowCookieSettings(false)} className="text-slate-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
 
-  const hasInversionText = inversion.toLowerCase().includes("oui") || inversion.toLowerCase().includes("active") || inversion.toLowerCase().includes("présente") || inversion.toLowerCase().includes("yes");
-  const hasInversion = hasInversionText || (manualWeather && manualWeather.temperature <= 2);
+            <div className="space-y-6">
+              {/* Cookies essentiels */}
+              <div className="bg-slate-800/50 p-5 rounded-2xl border-2 border-green-500/30">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle2 className="w-6 h-6 text-green-400" />
+                    <div>
+                      <h3 className="font-black text-white uppercase">Cookies Essentiels</h3>
+                      <p className="text-xs text-slate-400">Toujours actifs</p>
+                    </div>
+                  </div>
+                  <div className="bg-green-500 px-4 py-2 rounded-full text-xs font-black">ACTIF</div>
+                </div>
+                <p className="text-sm text-slate-300 mb-3">
+                  Nécessaires au fonctionnement du site. Gèrent la sécurité, la navigation et les préférences de base.
+                </p>
+                <div className="text-xs text-slate-400">
+                  <strong>Cookies:</strong> allo_meteo_consent (13 mois)
+                </div>
+              </div>
 
-  const manualSummaryLine = manualWeather
-    ? `Open-Meteo ${new Date(manualWeather.timestamp).toLocaleTimeString('fr-FR')} • ${manualWeather.temperature.toFixed(1)}°C • Vent ${manualWeather.windspeed.toFixed(1)} km/h`
-    : '';
+              {/* Cookies fonctionnels */}
+              <div className="bg-slate-800/50 p-5 rounded-2xl border-2 border-blue-500/30">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <User className="w-6 h-6 text-blue-400" />
+                    <div>
+                      <h3 className="font-black text-white uppercase">Cookies Fonctionnels</h3>
+                      <p className="text-xs text-slate-400">Améliore l'expérience</p>
+                    </div>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={cookiePreferences.functional}
+                      onChange={(e) => setCookiePreferences({...cookiePreferences, functional: e.target.checked})}
+                      className="sr-only peer"
+                    />
+                    <div className="w-14 h-7 bg-slate-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
+                <p className="text-sm text-slate-300 mb-3">
+                  Mémorisent votre localisation, ville, pays, historique de visites et préférences personnalisées.
+                </p>
+                <div className="text-xs text-slate-400">
+                  <strong>Cookies:</strong> allo_meteo_user_token (13 mois)<br/>
+                  <strong>LocalStorage:</strong> allo_meteo_user_profile, lastUserActivity
+                </div>
+              </div>
 
-  return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans pb-16">
-      <style>{spinAnimation}</style>
+              {/* Cookies analytiques */}
+              <div className="bg-slate-800/50 p-5 rounded-2xl border-2 border-purple-500/30 opacity-50">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <Activity className="w-6 h-6 text-purple-400" />
+                    <div>
+                      <h3 className="font-black text-white uppercase">Cookies Analytiques</h3>
+                      <p className="text-xs text-slate-400">Non implémenté</p>
+                    </div>
+                  </div>
+                  <div className="bg-slate-700 px-4 py-2 rounded-full text-xs font-black">DÉSACTIVÉ</div>
+                </div>
+                <p className="text-sm text-slate-300">
+                  Collectent des statistiques anonymes sur l'utilisation du site (non utilisé actuellement).
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-8">
+              <button
+                onClick={() => setShowCookieSettings(false)}
+                className="flex-1 px-6 py-4 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold uppercase text-sm transition-all"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={saveCustomCookies}
+                className="flex-1 px-6 py-4 bg-blue-600 hover:bg-blue-700 rounded-xl font-black uppercase text-sm transition-all shadow-xl"
+              >
+                Enregistrer mes Choix
+                <h3 className="font-black text-lg mb-2 uppercase tracking-tight">🍪 Cookies Indispensables</h3>
+                <p className="text-sm text-slate-300 leading-relaxed">
+                  Nous utilisons des <strong>cookies essentiels</strong> pour mémoriser vos préférences (localisation, modèle IA, historique), 
+                  améliorer votre expérience et vous reconnaître lors de vos prochaines visites. 
+                  Vos données sont <strong>stockées localement</strong> et conservées <strong>13 mois maximum</strong> (conformité RGPD).
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold">
+                  <span className="bg-blue-500/30 px-3 py-1 rounded-full">📍 Localisation</span>
+                  <span className="bg-blue-500/30 px-3 py-1 rounded-full">🔐 Token Utilisateur</span>
+                  <span className="bg-blue-500/30 px-3 py-1 rounded-full">💾 Préférences</span>
+                  <span className="bg-blue-500/30 px-3 py-1 rounded-full">📊 Statistiques d'usage</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={acceptCookies}
+                className="px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-2xl font-black uppercase text-sm transition-all shadow-xl active:scale-95 flex items-center gap-2"
+              >
+                <Cookie className="w-5 h-5" />
+                Accepter
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
           <div className="flex items-center gap-6">
@@ -599,7 +968,7 @@ const App = () => {
                 <div className="flex flex-col gap-4 flex-1 min-w-[300px]">
                   <div className="p-8 bg-white/10 rounded-[2.5rem] border border-white/10 backdrop-blur-md">
                     <p className="text-[10px] font-black text-blue-300 uppercase tracking-widest mb-2">Conditions {LOCATION}</p>
-                    <p className="text-3xl font-black uppercase italic tracking-tighter leading-tight">{meteoText.match(/ciel\s?:\s?([^,.]+)/i)?.[1] || "Stable"}</p>
+                    <p className="text-3xl font-black uppercase italic tracking-tighter leading-tight">{meteoText.match(/ciel\s?:\s?([^,.]+)/i)?.[1] || "Chargement..."}</p>
                   </div>
                   {hasInversion && (
                     <div className="p-6 bg-orange-500/20 rounded-[2rem] border-2 border-orange-400/50 flex items-center gap-4 animate-pulse">
@@ -615,7 +984,7 @@ const App = () => {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-12">
                 {[
                   { icon: CloudRain, label: 'PRÉCIP.', val: rain },
-                  { icon: CloudSnow, label: 'NEIGE', val: (meteoText.match(/(\d+)\s?cm/i)?.[1] || "0") + ' cm' },
+                  { icon: CloudSnow, label: 'NEIGE', val: (meteoText.match(/(\d+)\s?cm/i)?.[1] || "0.0") + ' cm' },
                   { icon: Droplets, label: 'HUMIDITÉ', val: humidity },
                   { icon: Gauge, label: 'PRESSION', val: pressure }
                 ].map((item, i) => (
@@ -672,13 +1041,13 @@ const App = () => {
             <div className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
               <h3 className="text-xl font-black mb-6 flex items-center gap-4 uppercase text-red-600"><SeismicIcon className="w-8 h-8" /> RISQUE SISMIQUE</h3>
               <div className="p-6 bg-red-50 rounded-[2rem] border-2 border-red-100">
-                <p className="text-lg font-bold text-red-900 italic">{risquesText.match(/sismique\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Très Faible"}</p>
+                <p className="text-lg font-bold text-red-900 italic">{risqueSismique}</p>
               </div>
             </div>
             <div className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
               <h3 className="text-xl font-black mb-6 flex items-center gap-4 uppercase text-blue-600"><FloodIcon className="w-8 h-8" /> RISQUE DE CRUES</h3>
               <div className="p-6 bg-blue-50 rounded-[2rem] border-2 border-blue-100">
-                <p className="text-lg font-bold text-blue-900 italic">{risquesText.match(/crues\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Vert"}</p>
+                <p className="text-lg font-bold text-blue-900 italic">{risqueCrues}</p>
               </div>
             </div>
           </section>

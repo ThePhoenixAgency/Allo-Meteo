@@ -82,6 +82,45 @@ Notes:
 
 ---
 
-Si tu veux, je peux :
-- ajouter l'étape Trivy dans `.github/workflows/ci.yml`,
-- auditer `packages/local-ai-mcp/Dockerfile` et appliquer les recommandations (user non-root, multi-stage) et proposer un patch.
+### ✅ Changements appliqués (patch rapide)
+- Dockerfile : multi-stage build, `NODE_ENV=production`, exécution en utilisateur non-root (`node`), copie minimale des artefacts. Le Dockerfile utilise maintenant `ARG BASE_IMAGE=node:25-slim` pour faciliter le pinning automatique.
+- `.dockerignore` : contexte de build réduit pour éviter de pousser des fichiers inutiles.
+- `package.json` : script `docker-build:secure` pour builder l'image durcie (`local-ai-mcp:secure`).
+- CI automatisée : workflow quotidien qui pinne la base (digest), exécute `npm audit fix` (prod), lance Trivy et commite automatiquement les corrections non risquées.
+
+### 🔍 Vérifier localement (suggestions)
+1. Builder l'image sécurisée :
+```bash
+npm run docker-build:secure
+# ou (build arg support) :
+docker build --build-arg BASE_IMAGE=node:25-slim -f packages/local-ai-mcp/Dockerfile -t local-ai-mcp:secure packages/local-ai-mcp
+```
+2. Scanner l'image (Trivy recommandé) :
+```bash
+# installer Trivy (macOS): brew install trivy
+trivy image local-ai-mcp:secure
+```
+3. Analyse de runtime / quick smoke-test :
+```bash
+docker run --rm -p 8080:8080 --read-only --cap-drop ALL -e MCP_SECRET="changeme" local-ai-mcp:secure
+# puis vérifier /health
+curl -f http://localhost:8080/health
+```
+
+### 🔁 Automatisation (ce que j'ai ajouté)
+- Job GitHub Actions `Auto update deps & base image` (daily):
+  - tente `npm audit fix --only=prod` et commit les corrections auto si sûres;
+  - récupère le digest de `node:25-slim` et pinne `ARG BASE_IMAGE` dans le `Dockerfile` (commit automatique);
+  - reconstruit l'image et lance un scan Trivy (échec en cas de vulnérabilités CRITICAL);
+  - crée automatiquement une issue si des vulnérabilités critiques non-fixables sont détectées.
+- Dependabot activé pour `npm` et `docker` (daily). Le job CI exécute les mises à jour deux fois par jour (auto‑commit silencieux).
+
+### ⚙️ Comment désactiver / ajuster le comportement
+- Pour empêcher le commit automatique : retire les permissions `contents: write` ou modifie le job pour créer une PR au lieu d'un push direct.
+- Pour changer la fréquence : édite `.github/workflows/auto-update-deps-and-baseimage.yml` (cron).
+
+---
+
+Si tu veux que je :
+- [A] ouvre la PR contenant toutes ces modifications + message de changelog, ou
+- [B] active un comportement "PR only" (au lieu de push direct) pour revue humaine, dis‑le et je prépare la PR correspondante.
