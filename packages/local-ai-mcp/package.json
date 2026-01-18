@@ -17,5 +17,8 @@
   "files": ["server.js","probe.js","README.md","Dockerfile","SECURITY.md"],
   "keywords": ["mcp","local-ai","lm-studio","tts","probe"],
   "author": "ThePhoenixAgency",
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=25 <26"
+  }
 }
