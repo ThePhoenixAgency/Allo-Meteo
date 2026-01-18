@@ -96,6 +96,21 @@ async function normalizeAndValidateBase(hostOrUrl) {
   return base;
 }
 
+// Extra safety: ensure that values used as `base` for outgoing requests are origin-like
+// (scheme + host[:port]) and do not contain any additional path or query components.
+function ensureSafeBase(base) {
+  if (!base || typeof base !== 'string') {
+    throw new Error('invalid_host');
+  }
+  const trimmed = base.trim();
+  // Must look like "<scheme>://<host[:port]>" with no trailing slash or path segment.
+  const originPattern = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^/]+$/;
+  if (!originPattern.test(trimmed)) {
+    throw new Error('invalid_host');
+  }
+  return trimmed;
+}
+
 // Candidate endpoints we probe for text generation. Keep this list ordered by most-likely/common endpoints.
 const TEXT_ENDPOINTS = ['/v1/responses', '/v1/chat/completions', '/v1/completions', '/generate', '/api/generate', '/api/inference', '/api/v1/generate', '/api/completions', '/completions', '/inference'];
 
@@ -110,8 +125,9 @@ const TTS_ENDPOINTS = ['/tts', '/api/tts', '/api/speech', '/v1/tts', '/api/v1/tt
  */
 export async function detectModelsOn(base) {
   try {
-    // normalize base then probe the models endpoint
-    const res = await fetch(`${base.replace(/\/$/, '')}/v1/models`);
+    // Ensure the base is an origin-like, path-free URL before probing the models endpoint.
+    const safeBase = ensureSafeBase(base);
+    const res = await fetch(`${safeBase}/v1/models`);
     if (!res.ok) return [];
     const json = await res.json().catch(() => null);
     if (!json) return [];
