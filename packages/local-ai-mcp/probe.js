@@ -10,6 +10,91 @@
 */
 
 import { setTimeout as wait } from 'node:timers/promises';
+import dns from 'node:dns';
+import { URL } from 'node:url';
+
+// Candidate endpoints we probe for text generation. Keep this list ordered by most-likely/common endpoints.
+const TEXT_ENDPOINTS = ['/v1/responses', '/v1/chat/completions', '/v1/completions', '/generate', '/api/generate', '/api/inference', '/api/v1/generate', '/api/completions', '/completions', '/inference'];
+
+// Candidate endpoints we probe for Text-To-Speech (TTS)
+const TTS_ENDPOINTS = ['/tts', '/api/tts', '/api/speech', '/v1/tts', '/api/v1/tts'];
+
+// Basic IP range checks to avoid SSRF into localhost/metadata/private networks.
+function isPrivateOrLoopbackIp(ip) {
+  // IPv4 checks
+  const v4 = ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const [ , aStr, bStr ] = v4;
+    const a = Number(aStr), b = Number(bStr);
+    if (a === 127) return true; // loopback 127.0.0.0/8
+    if (ip === '0.0.0.0') return true;
+    if (a === 10) return true; // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16
+    if (a === 169 && b === 254) return true; // link-local 169.254.0.0/16
+  }
+  // IPv6 checks
+  const lower = ip.toLowerCase();
+  if (lower === '::1') return true; // loopback
+  if (lower.startsWith('fe80:')) return true; // link-local
+  if (lower.startsWith('fc00:') || lower.startsWith('fd00:')) return true; // unique local
+  return false;
+}
+
+const lookupAsync = (host) => new Promise((resolve, reject) => {
+  dns.lookup(host, { all: false }, (err, address) => {
+    if (err) return reject(err);
+    resolve(address.address || address);
+  });
+});
+
+async function normalizeAndValidateBase(hostOrUrl) {
+  if (!hostOrUrl || typeof hostOrUrl !== 'string') {
+    throw new Error('invalid_host');
+  }
+  let candidate = hostOrUrl.trim();
+  if (!candidate) throw new Error('invalid_host');
+
+  // Prepend scheme if missing.
+  if (!/^https?:\/\//i.test(candidate)) {
+    candidate = `http://${candidate}`;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    throw new Error('invalid_host');
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('invalid_host');
+  }
+
+  if (!parsed.hostname) {
+    throw new Error('invalid_host');
+  }
+
+  // Basic hostname sanity: no obvious path traversal characters.
+  if (/[\/\\]/.test(parsed.hostname)) {
+    throw new Error('invalid_host');
+  }
+
+  // Resolve hostname and block localhost/private ranges.
+  let ip;
+  try {
+    ip = await lookupAsync(parsed.hostname);
+  } catch {
+    throw new Error('invalid_host');
+  }
+  if (isPrivateOrLoopbackIp(ip)) {
+    throw new Error('invalid_host');
+  }
+
+  // Normalize by removing trailing slash from origin + pathname base (but keep host/port).
+  const base = `${parsed.protocol}//${parsed.host}`.replace(/\/$/, '');
+  return base;
+}
 
 // Candidate endpoints we probe for text generation. Keep this list ordered by most-likely/common endpoints.
 const TEXT_ENDPOINTS = ['/v1/responses', '/v1/chat/completions', '/v1/completions', '/generate', '/api/generate', '/api/inference', '/api/v1/generate', '/api/completions', '/completions', '/inference'];
@@ -129,8 +214,8 @@ export async function probeTtsOn(base, prompt) {
   throw new Error('No working TTS endpoint');
 }
 
-export function wellFormedURL(hostOrUrl) {
-  if (!hostOrUrl) return null;
-  if (/^https?:\/\//.test(hostOrUrl)) return hostOrUrl.replace(/\/$/, '');
-  return `http://${hostOrUrl.replace(/\/$/, '')}`;
+export async function wellFormedURL(hostOrUrl) {
+  // Normalize and validate the base URL to reduce SSRF risk.
+  // Throws Error('invalid_host') on rejection.
+  return normalizeAndValidateBase(hostOrUrl);
 }
