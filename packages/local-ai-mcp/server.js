@@ -86,7 +86,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && pathname === '/models') {
       const host = query.host;
       if (!host) return json(res, 400, { error: 'host required' });
-      const base = wellFormedURL(host);
+      let base;
+      try {
+        base = await wellFormedURL(host);
+      } catch {
+        return json(res, 400, { error: 'invalid_host' });
+      }
       const models = await detectModelsOn(base);
       return json(res, 200, { ok: true, models, base });
     }
@@ -95,7 +100,12 @@ const server = http.createServer(async (req, res) => {
       const body = await collectBody(req);
       const host = body.host; const prompt = body.prompt || ''; const model = body.model || '';
       if (!host) return json(res, 400, { error: 'host required' });
-      const base = wellFormedURL(host);
+      let base;
+      try {
+        base = await wellFormedURL(host);
+      } catch {
+        return json(res, 400, { error: 'invalid_host' });
+      }
       const client = req.socket.remoteAddress || 'unknown';
       const key = `${client}::${base}`;
       const entry = rateMap.get(key) || {};
@@ -114,7 +124,12 @@ const server = http.createServer(async (req, res) => {
       const body = await collectBody(req);
       const host = body.host; const prompt = body.prompt || '';
       if (!host) return json(res, 400, { error: 'host required' });
-      const base = wellFormedURL(host);
+      let base;
+      try {
+        base = await wellFormedURL(host);
+      } catch {
+        return json(res, 400, { error: 'invalid_host' });
+      }
       const client = req.socket.remoteAddress || 'unknown';
       const key = `${client}::${base}`;
       const entry = rateMap.get(key) || {};
@@ -133,7 +148,12 @@ const server = http.createServer(async (req, res) => {
       const body = await collectBody(req);
       const host = body.host; const prompt = body.prompt || ''; const model = body.model || '';
       if (!host) return json(res, 400, { error: 'host required' });
-      const base = wellFormedURL(host);
+      let base;
+      try {
+        base = await wellFormedURL(host);
+      } catch {
+        return json(res, 400, { error: 'invalid_host' });
+      }
       const text = await probeTextOn(base, prompt, model).catch(err => ({ error: err.message }));
       const tts = await probeTtsOn(base, prompt).catch(err => ({ error: err.message }));
       return json(res, 200, { ok: true, text, tts });
