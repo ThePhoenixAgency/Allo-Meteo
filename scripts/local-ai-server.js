@@ -49,11 +49,11 @@ const server = http.createServer((req, res) => {
   response(res, 404, { error: 'Not found' });
 });
 
-const os = require('os');
+import os from 'os';
 
 function getLocalIPs() {
   const nets = os.networkInterfaces();
-  const results = [];
+  const results = []; 
   for (const name of Object.keys(nets)) {
     for (const net of nets[name]) {
       if (net.family === 'IPv4' && !net.internal) results.push(net.address);
@@ -74,7 +74,6 @@ server.listen(PORT, '0.0.0.0', () => {
 });
 
 // add status and stop handlers
-const http = require('http');
 // monkey patch to add /_status and /_stop in the handler above (simple approach)
 const originalHandler = server.emit;
 server.emit = function(ev, req, res) {
