@@ -179,7 +179,10 @@ function extractTextFromResponse(json) {
  * - Throws Error when no endpoint matches; caller should catch and handle fallback logic.
  */
 export async function probeTextOn(base, prompt, model) {
-  base = base.replace(/\/$/, '');
+  // Validate and normalize the base URL to prevent SSRF
+  const safeBase = await normalizeAndValidateBase(base);
+  const validBase = ensureSafeBase(safeBase);
+
   const payloads = [
     ...(model ? [{ model, input: prompt }, { model, messages: [{ role: 'user', content: prompt }] }] : []),
     { prompt }, { input: prompt }, { inputs: prompt }, { text: prompt }, { messages: [{ role: 'user', content: prompt }] }, { model: 'default', prompt }
@@ -189,7 +192,7 @@ export async function probeTextOn(base, prompt, model) {
   for (const p of TEXT_ENDPOINTS) {
     for (const body of payloads) {
       try {
-        const url = `${base}${p}`;
+        const url = `${validBase}${p}`;
         const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), timeout: 5000 });
         const text = await res.text();
         let json = null;
@@ -214,13 +217,15 @@ export async function probeTextOn(base, prompt, model) {
 
 
 export async function probeTtsOn(base, prompt) {
-  base = base.replace(/\/$/, '');
+  // Validate and normalize the base URL to prevent SSRF
+  const safeBase = await normalizeAndValidateBase(base);
+  const validBase = ensureSafeBase(safeBase);
   const payloads = [{ prompt }, { text: prompt }, { input: prompt }, { messages: [{ role: 'user', content: prompt }] }];
   const t0 = Date.now();
   for (const p of TTS_ENDPOINTS) {
     for (const body of payloads) {
       try {
-        const url = `${base}${p}`;
+        const url = `${validBase}${p}`;
         const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), timeout: 7000 });
         const json = await res.json().catch(() => null);
         if (res.ok && json) {
