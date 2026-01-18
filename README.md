@@ -25,8 +25,6 @@ Application web de bulletins météo en temps réel pour la région de l'Oisans 
 - 🌡️ **Données météo** via Prevision-Meteo.ch
 - 🍪 **RGPD compliant** avec bandeau cookies
 
-View your app in AI Studio: https://ai.studio/apps/drive/1yC3cZZB51koB9pMtrDMxTCZeHkOFh5wY
-
 ## 🛠️ Technologies
 
 ### Frontend
@@ -106,12 +104,7 @@ document.cookie.split(";").forEach(c => document.cookie = c.trim().split("=")[0]
 
 ### 2026-01-18 - Nettoyage & Améliorations
 
-#### Repository Cleanup
-- Merge de 3 branches dans `main`
-- Suppression branches obsolètes
-- Repository simplifié : branche `main` uniquement
-
-#### Améliorations Code
+#### Netoyage et Améliorations du Code
 - Ajout timeout sur requêtes API externes
 - Validation améliorée des réponses API
 - Utilisation `URL()` constructor pour construction d'URLs
