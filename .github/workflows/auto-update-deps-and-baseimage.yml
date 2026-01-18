@@ -58,8 +58,8 @@ jobs:
           FILE=${{ env.DOCKERFILE_PATH }}
           echo "Pinning ${FILE} -> ${BASE_IMAGE}@${DIGEST}"
           # replace ARG or FROM that references node:25-slim
-          perl -0777 -pe "s{ARG\s+BASE_IMAGE=.*}{ARG BASE_IMAGE=${{ env.BASE_IMAGE }}@${DIGEST}}smi" -i $FILE
-          perl -0777 -pe "s{FROM\s+node:25-slim}{FROM \${BASE_IMAGE}}smi" -i $FILE || true
+          perl -0777 -pe "s{ARG\s+BASE_IMAGE=.*}{ARG BASE_IMAGE=node:25-slim@\${DIGEST}}smi" -i $FILE
+          perl -0777 -pe "s{FROM\s+node:25-slim}{FROM ${BASE_IMAGE}}smi" -i $FILE || true
           git add $FILE
           if ! git diff --cached --quiet; then
             git commit -m "chore(auto): pin base image to ${DIGEST} (daily)" || true
@@ -72,7 +72,7 @@ jobs:
           docker build -f ${{ env.DOCKERFILE_PATH }} -t local-ai-mcp:daily-scan ${{ env.PACKAGE_DIR }}
 
       - name: Trivy scan (fail only on critical)
-        uses: aquasecurity/trivy-action@v2
+        uses: aquasecurity/trivy-action@0.29.0
         with:
           image-ref: local-ai-mcp:daily-scan
           format: 'table'
@@ -96,13 +96,13 @@ jobs:
             echo 'origin/main not found'
           fi
 
-      - name: Create issue for remaining high/critical vulns
-        if: failure()
-        uses: peter-evans/create-issue-from-file@v4
-        with:
-          title: "[auto-update] Vulnerabilities detected in local-ai-mcp (daily)"
-          content-file: ./packages/local-ai-mcp/SECURITY.md
-          labels: automated,security
+      # - name: Create issue for remaining high/critical vulns
+      #   if: failure()
+      #   uses: peter-evans/create-issue-from-file@v5
+      #   with:
+      #     title: "[auto-update] Vulnerabilities detected in local-ai-mcp (daily)"
+      #     content-file: ./packages/local-ai-mcp/SECURITY.md
+      #     labels: automated,security
 
   dependabot-enable:
     name: Ensure Dependabot updates Docker & npm
