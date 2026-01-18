@@ -162,7 +162,7 @@ const server = http.createServer(async (req, res) => {
     return json(res, 404, { error: 'not_found' });
   } catch (e) {
     console.error('server error', e);
-    return json(res, 500, { error: e.message || String(e) });
+    return json(res, 500, { error: 'internal_server_error' });
   }
 });
 

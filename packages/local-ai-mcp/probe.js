@@ -24,7 +24,7 @@ function isPrivateOrLoopbackIp(ip) {
   // IPv4 checks
   const v4 = ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
   if (v4) {
-    const [ , aStr, bStr ] = v4;
+    const [, aStr, bStr] = v4;
     const a = Number(aStr), b = Number(bStr);
     if (a === 127) return true; // loopback 127.0.0.0/8
     if (ip === '0.0.0.0') return true;
@@ -111,12 +111,6 @@ function ensureSafeBase(base) {
   return trimmed;
 }
 
-// Candidate endpoints we probe for text generation. Keep this list ordered by most-likely/common endpoints.
-const TEXT_ENDPOINTS = ['/v1/responses', '/v1/chat/completions', '/v1/completions', '/generate', '/api/generate', '/api/inference', '/api/v1/generate', '/api/completions', '/completions', '/inference'];
-
-// Candidate endpoints we probe for Text-To-Speech (TTS)
-const TTS_ENDPOINTS = ['/tts', '/api/tts', '/api/speech', '/v1/tts', '/api/v1/tts'];
-
 /**
  * detectModelsOn(base)
  * - Probes `${base}/v1/models` for available model identifiers (LM Studio style).
@@ -125,9 +119,19 @@ const TTS_ENDPOINTS = ['/tts', '/api/tts', '/api/speech', '/v1/tts', '/api/v1/tt
  */
 export async function detectModelsOn(base) {
   try {
-    // Ensure the base is an origin-like, path-free URL before probing the models endpoint.
-    const safeBase = ensureSafeBase(base);
-    const res = await fetch(`${safeBase}/v1/models`);
+    // Validate and normalize the base URL to prevent SSRF
+    const safeBase = await normalizeAndValidateBase(base);
+    const validBase = ensureSafeBase(safeBase);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    const res = await fetch(`${validBase}/v1/models`, {
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json' }
+    });
+    clearTimeout(timeoutId);
+
     if (!res.ok) return [];
     const json = await res.json().catch(() => null);
     if (!json) return [];
@@ -223,7 +227,7 @@ export async function probeTtsOn(base, prompt) {
           const audio = json.audio || json.base64 || json.data || null;
           if (audio) return { audio, perf: { latencyMs: Date.now() - t0 }, endpoint: `${base}${p}` };
         }
-      } catch (e) {}
+      } catch (e) { }
       await wait(50);
     }
   }

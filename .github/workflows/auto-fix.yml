@@ -5,6 +5,9 @@
 
 name: Auto Fix & Commit
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [ main ]
