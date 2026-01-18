@@ -49,22 +49,25 @@ Généré automatiquement par l'assistant. Date: 2026-01-18
 | 39 | Monitoring: ajouter endpoints metrics / prometheus pour `local-ai-mcp` et exporter métriques en conteneur | not-started |
 | 40 | CI: ajouter job de sécurité qui exécute `npm audit` et échoue sur CVE critiques | not-started |
 | 41 | Git: nettoyage des branches obsolètes (merge + suppression locale et remote) | completed |
-| 42 | Security: corriger SSRF dans index.tsx ligne 562 (fetch vers ipapi.co sans validation) | not-started |
+| 42 | Security: corriger SSRF dans index.tsx ligne 562 (fetch vers ipapi.co sans validation) | completed |
 | 43 | DevOps: rendre les hooks Git exécutables (.husky/pre-commit et .husky/pre-push) | not-started |
+| 44 | Security: corriger SSRF dans probe.js (validation URL dans detectModelsOn, probeTextOn, probeTtsOn) | completed |
+| 45 | Security: masquer stack traces dans server.js (information exposure) | completed |
+| 46 | Security: ajouter permissions read-only aux workflows GitHub Actions | completed |
+| 47 | Docs: documenter pratiques de sécurité dans README.md | completed |
+| 48 | Docs: ajouter changelog 2026-01-18 dans README.md | completed |
 
 ---
 
 Notes & décisions en suspens:
 - Décider si l'absence de `GEMINI_API_KEY` doit rendre le CI fatal ou non (voir tâche 30).
 - Déterminer le owner pour le Job Trivy / CI (ex: "devops@thephoenixagency"), assigner dans la première PR.
-- **URGENT**: Corriger la vulnérabilité SSRF dans index.tsx (tâche 42) - requête non validée vers API externe
 
 ## Questions en suspens (consignées — l'assistant ne posera plus de questions)
 - Policy: faut-il rendre le CI fatal si `GEMINI_API_KEY` est absent ? (voir tâche 30)
 - Owner: qui est responsable du Job Trivy / CI ?
 - Publication: décider de la politique de publication NPM/GHCR (qui a accès aux secrets)
 - Priorité: prioriser le job Trivy (ID 3) ou l'audit/patch du Dockerfile (ID 5)
-- **Security**: Valider la correction SSRF (tâche 42) - implémenter whitelist d'URLs ou proxy sécurisé
 
 ## Notes de l'assistant
 Toutes les questions, propositions et décisions en suspens sont consignées ci-dessus.
@@ -73,8 +76,12 @@ L'assistant n'émettra plus de questions actives — il documentera toute propos
 ### Dernières actions (2026-01-18)
 - ✅ Nettoyage Git complet : merge de 3 branches non-mergées dans main
 - ✅ Suppression de 6 branches locales et 5 branches remote
-- ✅ Push des changements vers origin/main (c691dae..6e0c710)
-- ⚠️ Identification vulnérabilité SSRF dans index.tsx:562
+- ✅ Push des changements vers origin/main (c691dae..ad4fbf4)
+- ✅ Correction SSRF critique dans index.tsx (timeout + validation)
+- ✅ Correction SSRF critique dans probe.js (validation URL + URL constructor)
+- ✅ Correction information exposure dans server.js (masquage stack traces)
+- ✅ Ajout permissions read-only aux workflows GitHub Actions (ci.yml, auto-fix.yml, security-audit.yml)
+- ✅ Documentation complète dans README.md (section sécurité + changelog)
 
 _Last updated: 2026-01-18_
 

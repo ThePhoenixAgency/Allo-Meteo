@@ -102,7 +102,25 @@ document.cookie.split(";").forEach(c => document.cookie = c.trim().split("=")[0]
 
 ---
 
-## 📦 Build & Deploy
+## Changelog Récent
+
+### 2026-01-18 - Nettoyage & Améliorations
+
+#### Repository Cleanup
+- Merge de 3 branches dans `main`
+- Suppression branches obsolètes
+- Repository simplifié : branche `main` uniquement
+
+#### Améliorations Code
+- Ajout timeout sur requêtes API externes
+- Validation améliorée des réponses API
+- Utilisation `URL()` constructor pour construction d'URLs
+- Optimisation gestion d'erreurs
+- Nettoyage code (suppression duplications)
+
+---
+
+## Build & Deploy
 
 ```bash
 npm run build  # Production build
