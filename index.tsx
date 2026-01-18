@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { 
+import {
   Sun, Cloud, CloudRain, CloudSun, CloudSnow,
-  Mountain, Thermometer, Volume2, MapPin, 
+  Mountain, Thermometer, Volume2, MapPin,
   Wind, Droplets, Loader2, Play, Square,
   Waves, Snowflake, Eye, Gauge, Droplet, Moon,
   Clock, ShieldAlert, Mail, CheckCircle2, Info,
@@ -165,7 +165,7 @@ async function tryLocalEndpoint(base: string, path: string, prompt: string) {
   const selectedModel = typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_model') || '').trim() : '';
   const payloads = [
     // prefer model-aware payloads
-    ...(selectedModel ? [ { model: selectedModel, input: prompt }, { model: selectedModel, messages: [{ role: 'user', content: prompt }] } ] : []),
+    ...(selectedModel ? [{ model: selectedModel, input: prompt }, { model: selectedModel, messages: [{ role: 'user', content: prompt }] }] : []),
     { prompt },
     { input: prompt },
     { inputs: prompt },
@@ -181,7 +181,7 @@ async function tryLocalEndpoint(base: string, path: string, prompt: string) {
       let json: any = null;
       try { json = JSON.parse(text); } catch (e) { json = null; }
       if (res.ok && json) {
-        try { console.info(`Probe ${base}${path} OK ${res.status} - body preview:`, JSON.stringify(json).slice(0,500)); } catch(e) {}
+        try { console.info(`Probe ${base}${path} OK ${res.status} - body preview:`, JSON.stringify(json).slice(0, 500)); } catch (e) { }
 
         const extractText = (obj: any): string | null => {
           if (!obj) return null;
@@ -213,7 +213,7 @@ async function tryLocalEndpoint(base: string, path: string, prompt: string) {
 
         const extracted = extractText(json) || extractText(json.candidates?.[0]) || extractText(json.choices?.[0]);
         if (extracted) {
-          try { console.info(`Using extracted text from ${base}${path}:`, extracted.slice(0,200)); } catch(e) {}
+          try { console.info(`Using extracted text from ${base}${path}:`, extracted.slice(0, 200)); } catch (e) { }
           const tokens = json?.usage?.total_tokens || json?.usage?.total || json?.token_count || Math.max(1, Math.round((extracted.split(/\s+/).length) / 0.75));
           return { text: extracted, sources: json.sources || json.metadata || [], tokens };
         }
@@ -223,7 +223,7 @@ async function tryLocalEndpoint(base: string, path: string, prompt: string) {
         console.debug(`local endpoint ${base}${path} responded with error:`, json.error);
         continue;
       }
-      try { console.debug(`Probe ${base}${path} returned ${res.status} but no usable fields. body preview:`, (json ? JSON.stringify(json).slice(0,500) : 'non-json response')); } catch(e) {}
+      try { console.debug(`Probe ${base}${path} returned ${res.status} but no usable fields. body preview:`, (json ? JSON.stringify(json).slice(0, 500) : 'non-json response')); } catch (e) { }
     } catch (e) {
       console.debug(`failed ${url}:`, e.message || e);
       continue;
@@ -253,7 +253,7 @@ const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: stri
   // try cached endpoint
   const cached = (localStorage.getItem('allo_meteo_local_text_endpoint') || '').trim();
   if (cached) {
-    try { console.info('Trying cached text endpoint:', cached); } catch(e) {}
+    try { console.info('Trying cached text endpoint:', cached); } catch (e) { }
     for (const base of LOCAL_AI_BASE_URLS) {
       const result = await tryLocalEndpoint(base, cached, prompt);
       if (result) {
@@ -296,9 +296,9 @@ async function tryLocalTtsEndpoint(base: string, path: string, prompt: string) {
       const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const json = await res.json().catch(() => null);
       if (res.ok && json) {
-        try { console.info(`Probe tts ${base}${path} OK ${res.status} - body preview:`, JSON.stringify(json).slice(0,500)); } catch(e) {}
+        try { console.info(`Probe tts ${base}${path} OK ${res.status} - body preview:`, JSON.stringify(json).slice(0, 500)); } catch (e) { }
         if (json.audio || json.base64 || json.data) {
-          try { console.info(`Using audio field from ${base}${path}, length: ${((json.audio||json.base64||json.data)||'').length}`); } catch(e) {}
+          try { console.info(`Using audio field from ${base}${path}, length: ${((json.audio || json.base64 || json.data) || '').length}`); } catch (e) { }
           return (json.audio || json.base64 || json.data) as string;
         }
       }
@@ -306,7 +306,7 @@ async function tryLocalTtsEndpoint(base: string, path: string, prompt: string) {
         console.debug(`local tts ${base}${path} replied error`, json.error);
         continue;
       }
-      try { console.debug(`Probe tts ${base}${path} returned ${res.status} but no audio field. body preview:`, (json ? JSON.stringify(json).slice(0,500) : 'non-json response')); } catch(e) {}
+      try { console.debug(`Probe tts ${base}${path} returned ${res.status} but no audio field. body preview:`, (json ? JSON.stringify(json).slice(0, 500) : 'non-json response')); } catch (e) { }
     } catch (e) {
       console.debug(`failed tts ${url}:`, e.message || e);
       continue;
@@ -337,7 +337,7 @@ const fetchBulletinAudioWithFallback = async (prompt: string) => {
   // try cached tts endpoint
   const cachedTts = (localStorage.getItem('allo_meteo_local_tts_endpoint') || '').trim();
   if (cachedTts) {
-    try { console.info('Trying cached TTS endpoint:', cachedTts); } catch(e) {}
+    try { console.info('Trying cached TTS endpoint:', cachedTts); } catch (e) { }
     for (const base of LOCAL_AI_BASE_URLS) {
       try {
         const path = cachedTts.startsWith('http') ? cachedTts.replace(base, '') : cachedTts;
@@ -348,7 +348,7 @@ const fetchBulletinAudioWithFallback = async (prompt: string) => {
           localStorage.setItem('allo_meteo_local_tts_endpoint', `${base}${path}`);
           return { audio, perf };
         }
-      } catch(e) {}
+      } catch (e) { }
     }
     localStorage.removeItem('allo_meteo_local_tts_endpoint');
   }
@@ -391,7 +391,7 @@ const App = () => {
   const [mcpHost, setMcpHost] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_host') || LOCAL_AI_BASE_URLS[0]) : LOCAL_AI_BASE_URLS[0]));
   const [mcpSecret, setMcpSecret] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_secret') || '') : ''));
   const [mcpStatus, setMcpStatus] = useState<any>(null);
-  
+
   // État RGPD
   const [showCookieBanner, setShowCookieBanner] = useState<boolean>(false);
   const [showCookieSettings, setShowCookieSettings] = useState<boolean>(false);
@@ -408,7 +408,7 @@ const App = () => {
       const now = Date.now();
       if (now - (textCooldownRef.current || 0) < TEXT_COOLDOWN_MS) {
         const remaining = TEXT_COOLDOWN_MS - (now - (textCooldownRef.current || 0));
-        setLastPerf((p:any) => ({ ...p, rateLimitedUntil: Date.now() + remaining }));
+        setLastPerf((p: any) => ({ ...p, rateLimitedUntil: Date.now() + remaining }));
         console.warn('Skipped fetchExpertData due to rate limit', remaining);
         setGlobalLoading(false);
         return;
@@ -419,14 +419,14 @@ const App = () => {
       const res = await fetchExpertTextWithFallback(prompt);
       const rawText = res.text || '';
       const cleanText = rawText.replace(/[\*#_>`~]/g, '');
-      console.info('Expert text fetched. excerpt:', cleanText.slice(0,400));
+      console.info('Expert text fetched. excerpt:', cleanText.slice(0, 400));
       console.debug('Expert sources:', res.sources, 'perf:', res.perf);
       setExpertData({ text: cleanText, sources: res.sources });
-      
+
       // Sauvegarder timestamp pour cache
       localStorage.setItem('lastAIFetch', Date.now().toString());
-      
-      if (res.perf) setLastPerf((p:any) => ({ ...p, textLatencyMs: res.perf.latencyMs, model: res.perf.model, tokens: res.perf.tokens }));
+
+      if (res.perf) setLastPerf((p: any) => ({ ...p, textLatencyMs: res.perf.latencyMs, model: res.perf.model, tokens: res.perf.tokens }));
     } catch (error) {
       console.error('Expert fetch failed:', error);
       setExpertData({ text: 'Analyse météorologique temporairement indisponible. Veuillez rafraîchir la page.', sources: [] });
@@ -441,7 +441,7 @@ const App = () => {
       else localStorage.removeItem('allo_meteo_model');
       // re-fetch to re-probe endpoints with preferred model
       fetchExpertData();
-    } catch(e) {}
+    } catch (e) { }
   }, [selectedModel]);
 
   useEffect(() => {
@@ -452,7 +452,7 @@ const App = () => {
     }, 500);
     return () => clearInterval(timer);
   }, []);
-  
+
   const audioContextRef = useRef<AudioContext | null>(null);
   const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
 
@@ -466,17 +466,17 @@ const App = () => {
       }
       const data = await response.json();
       const current = data.current_condition;
-      
+
       if (current) {
         // Convertir la direction du vent en degrés
-        const windDirMap: {[key: string]: number} = {
+        const windDirMap: { [key: string]: number } = {
           'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
           'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
           'S': 180, 'SSW': 202.5, 'SW': 225, 'WSW': 247.5,
           'W': 270, 'WNW': 292.5, 'NW': 315, 'NNW': 337.5
         };
         const windDirection = windDirMap[current.wnd_dir] ?? 0;
-        
+
         setManualWeather({
           temperature: parseFloat(current.tmp),
           windspeed: parseFloat(current.wnd_spd),
@@ -502,10 +502,10 @@ const App = () => {
         const json = await res.json().catch(() => null);
         if (!json) continue;
         let models: string[] = [];
-        if (Array.isArray(json.data)) models = json.data.map((m:any) => m.id).filter(Boolean);
-        else if (Array.isArray(json.models)) models = json.models.map((m:any) => m.id).filter(Boolean);
-        else if (Array.isArray(json)) models = json.map((m:any) => (m.id || m)).filter(Boolean);
-        if (models.length) { setAvailableModels(models); setAiEndpoint(base); console.info('Detected models at', base, models.slice(0,10)); return; }
+        if (Array.isArray(json.data)) models = json.data.map((m: any) => m.id).filter(Boolean);
+        else if (Array.isArray(json.models)) models = json.models.map((m: any) => m.id).filter(Boolean);
+        else if (Array.isArray(json)) models = json.map((m: any) => (m.id || m)).filter(Boolean);
+        if (models.length) { setAvailableModels(models); setAiEndpoint(base); console.info('Detected models at', base, models.slice(0, 10)); return; }
       } catch (e) { console.debug('detectLocalModels failed for', base, e); }
     }
     setAvailableModels([]);
@@ -551,7 +551,7 @@ const App = () => {
 
     let profile: UserProfile | null = null;
     const savedProfile = localStorage.getItem('allo_meteo_user_profile');
-    
+
     if (savedProfile) {
       profile = JSON.parse(savedProfile);
       profile!.visitCount = (profile!.visitCount || 0) + 1;
@@ -559,8 +559,26 @@ const App = () => {
     } else {
       // Géolocalisation via ipapi.co (gratuit, pas de clé API)
       try {
-        const geoRes = await fetch('https://ipapi.co/json/');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+        const geoRes = await fetch('https://ipapi.co/json/', {
+          signal: controller.signal,
+          headers: { 'Accept': 'application/json' }
+        });
+        clearTimeout(timeoutId);
+
+        if (!geoRes.ok) {
+          throw new Error(`HTTP ${geoRes.status}`);
+        }
+
         const geoData = await geoRes.json();
+
+        // Validation des données reçues
+        if (typeof geoData !== 'object' || geoData === null) {
+          throw new Error('Invalid response format');
+        }
+
         profile = {
           userId: crypto.randomUUID(),
           city: geoData.city || 'Inconnu',
@@ -614,21 +632,21 @@ const App = () => {
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    
+
     // Init RGPD et profil utilisateur
     initUserProfile();
-    
+
     // Marquer l'activité au chargement de la page
     markUserActivity();
-    
+
     // Check cache - si données récentes, ne pas appeler l'API
     const lastFetch = localStorage.getItem('lastAIFetch');
     const cacheExpired = !lastFetch || (Date.now() - parseInt(lastFetch)) > AUTO_REFRESH_INTERVAL_MS;
-    
+
     // Toujours fetch la météo basique (pas coûteux)
     fetchManualWeather();
     detectLocalModels();
-    
+
     // Fetch IA seulement si utilisateur actif ET cache expiré
     if (isUserActive() && cacheExpired) {
       console.info('🚀 Chargement IA pour utilisateur actif');
@@ -638,7 +656,7 @@ const App = () => {
     } else {
       console.info('📦 Utilisation cache IA - expire dans', Math.round((AUTO_REFRESH_INTERVAL_MS - (Date.now() - parseInt(lastFetch))) / 60000), 'min');
     }
-    
+
     // Auto-refresh toutes les AUTO_REFRESH_INTERVAL_MS (mais seulement si utilisateur actif)
     const refreshTimer = setInterval(() => {
       if (isUserActive()) {
@@ -648,7 +666,7 @@ const App = () => {
         console.info('⏸️ Auto-refresh annulé (pas d\'utilisateur actif)');
       }
     }, AUTO_REFRESH_INTERVAL_MS);
-    
+
     return () => {
       clearInterval(timer);
       clearInterval(refreshTimer);
@@ -664,14 +682,14 @@ const App = () => {
   };
 
   const stopAudio = () => {
-    activeSourcesRef.current.forEach(source => { 
-      try { source.stop(); source.disconnect(); } catch (e) {} 
+    activeSourcesRef.current.forEach(source => {
+      try { source.stop(); source.disconnect(); } catch (e) { }
     });
     activeSourcesRef.current.clear();
     setIsPlaying(false);
-    if (audioContextRef.current) { 
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null; 
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => { });
+      audioContextRef.current = null;
     }
   };
 
@@ -681,7 +699,7 @@ const App = () => {
     const now = Date.now();
     if (now - (ttsCooldownRef.current || 0) < TTS_COOLDOWN_MS) {
       const remaining = TTS_COOLDOWN_MS - (now - (ttsCooldownRef.current || 0));
-      setLastPerf((p:any) => ({ ...p, rateLimitedUntil: Date.now() + remaining }));
+      setLastPerf((p: any) => ({ ...p, rateLimitedUntil: Date.now() + remaining }));
       console.warn('Skipped playWeatherBulletin due to TTS rate limit', remaining);
       return;
     }
@@ -695,8 +713,8 @@ const App = () => {
       if (!base64Audio) { setLoading(false); return; }
 
       ttsCooldownRef.current = Date.now();
-      if (perf) setLastPerf((p:any) => ({ ...p, audioLatencyMs: perf.latencyMs, model: perf.model }));
-      try { console.info('Fetched audio length:', base64Audio.length); } catch(e) {}
+      if (perf) setLastPerf((p: any) => ({ ...p, audioLatencyMs: perf.latencyMs, model: perf.model }));
+      try { console.info('Fetched audio length:', base64Audio.length); } catch (e) { }
 
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       const audioBuffer = await decodeAudioData(decodeBase64(base64Audio), audioContextRef.current, 24000, 1);
@@ -718,13 +736,13 @@ const App = () => {
   // Gestion des états IA
   const hasAnyAIData = expertData?.text?.trim().length > 0;
   const hasRisquesData = risquesText.trim().length > 0;
-  
+
   // États: Chargement initial, IA a répondu, IA indisponible
   const isLoading = !hasAnyAIData && globalLoading;
-  const risqueSismique = hasRisquesData 
+  const risqueSismique = hasRisquesData
     ? (risquesText.match(/sismique\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Aucune alerte en cours")
     : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte en cours" : "IA indisponible"));
-  const risqueCrues = hasRisquesData 
+  const risqueCrues = hasRisquesData
     ? (risquesText.match(/crues\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Aucune alerte en cours")
     : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte en cours" : "IA indisponible"));
 
@@ -748,7 +766,7 @@ const App = () => {
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
     const day = now.getDate();
-    
+
     // Algorithme simplifié pour calculer la phase de lune
     let c = 0, e = 0, jd = 0, b = 0;
     if (month < 3) {
@@ -764,11 +782,11 @@ const App = () => {
       jd = Math.floor(365.25 * (year + 4716));
       b = Math.floor(30.6001 * (month + 1));
     }
-    
+
     const fullJD = jd + b + day - 1524.5;
     const daysSinceNew = (fullJD - 2451550.1) % 29.53059;
     const phase = daysSinceNew / 29.53059;
-    
+
     if (phase < 0.0625) return "🌑 Nouvelle Lune";
     if (phase < 0.1875) return "🌒 Premier Croissant";
     if (phase < 0.3125) return "🌓 Premier Quartier";
@@ -787,7 +805,7 @@ const App = () => {
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans pb-16">
       <style>{spinAnimation}</style>
-      
+
       {/* Bandeau RGPD Conforme */}
       {showCookieBanner && !showCookieSettings && (
         <div className="fixed bottom-0 left-0 right-0 bg-slate-900/98 backdrop-blur-xl text-white p-6 z-[9999] border-t-4 border-blue-500 shadow-2xl">
@@ -799,8 +817,8 @@ const App = () => {
               <div className="flex-1">
                 <h3 className="font-black text-xl mb-3 uppercase tracking-tight">🍪 Gestion des Cookies</h3>
                 <p className="text-sm text-slate-300 leading-relaxed mb-4">
-                  Nous utilisons des cookies pour améliorer votre expérience. Les <strong>cookies essentiels</strong> sont 
-                  nécessaires au fonctionnement du site. Vous pouvez accepter ou refuser les cookies <strong>fonctionnels</strong> 
+                  Nous utilisons des cookies pour améliorer votre expérience. Les <strong>cookies essentiels</strong> sont
+                  nécessaires au fonctionnement du site. Vous pouvez accepter ou refuser les cookies <strong>fonctionnels</strong>
                   et <strong>analytiques</strong>.
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
@@ -829,7 +847,7 @@ const App = () => {
                 </div>
               </div>
             </div>
-            
+
             <div className="flex flex-col sm:flex-row gap-3 justify-end">
               <button
                 onClick={rejectNonEssentialCookies}
@@ -851,10 +869,10 @@ const App = () => {
                 Tout Accepter
               </button>
             </div>
-            
+
             <p className="text-[10px] text-slate-500 mt-4 text-center">
-              Conservation max: <strong>13 mois</strong> (conformité RGPD) • 
-              Données stockées localement • 
+              Conservation max: <strong>13 mois</strong> (conformité RGPD) •
+              Données stockées localement •
               <a href="#privacy" className="underline hover:text-white ml-1">Politique de confidentialité</a>
             </p>
           </div>
@@ -910,7 +928,7 @@ const App = () => {
                     <input
                       type="checkbox"
                       checked={cookiePreferences.functional}
-                      onChange={(e) => setCookiePreferences({...cookiePreferences, functional: e.target.checked})}
+                      onChange={(e) => setCookiePreferences({ ...cookiePreferences, functional: e.target.checked })}
                       className="sr-only peer"
                     />
                     <div className="w-14 h-7 bg-slate-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-blue-600"></div>
@@ -920,7 +938,7 @@ const App = () => {
                   Mémorisent votre localisation, ville, pays, historique de visites et préférences personnalisées.
                 </p>
                 <div className="text-xs text-slate-400">
-                  <strong>Cookies:</strong> allo_meteo_user_token (13 mois)<br/>
+                  <strong>Cookies:</strong> allo_meteo_user_token (13 mois)<br />
                   <strong>LocalStorage:</strong> allo_meteo_user_profile, lastUserActivity
                 </div>
               </div>
@@ -989,7 +1007,7 @@ const App = () => {
           <section className="bg-gradient-to-br from-blue-700 to-indigo-900 rounded-[3rem] p-10 text-white shadow-2xl relative overflow-hidden border-b-[10px] border-blue-500">
             <div className="relative z-10">
               <div className="flex items-center gap-4 text-blue-100 font-black text-2xl uppercase mb-8">
-                <CalendarDays className="w-8 h-8" /> 
+                <CalendarDays className="w-8 h-8" />
                 {new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(currentTime)}
                 <span className="text-white/30 font-light mx-2">|</span>
                 <span className="text-white">{currentTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -1128,7 +1146,7 @@ const App = () => {
               <div><strong>Modèle:</strong> {selectedModel || 'Auto'}</div>
               <div><strong>Latences:</strong> texte {lastPerf?.textLatencyMs ?? '-'} ms · audio {lastPerf?.audioLatencyMs ?? '-'} ms</div>
               <div><strong>Tokens:</strong> {lastPerf?.tokens ?? '-'}</div>
-              <div><strong>Rate:</strong> {textCooldownRemaining ? `texte cooldown ${Math.ceil(textCooldownRemaining/1000)}s` : 'ok'} · {ttsCooldownRemaining ? `tts cooldown ${Math.ceil(ttsCooldownRemaining/1000)}s` : 'ok'}</div>
+              <div><strong>Rate:</strong> {textCooldownRemaining ? `texte cooldown ${Math.ceil(textCooldownRemaining / 1000)}s` : 'ok'} · {ttsCooldownRemaining ? `tts cooldown ${Math.ceil(ttsCooldownRemaining / 1000)}s` : 'ok'}</div>
               <div className="flex gap-2 mt-3">
                 <button onClick={() => { localStorage.removeItem('allo_meteo_local_text_endpoint'); detectLocalModels(); }} className="px-3 py-2 bg-blue-600 text-white rounded">Ré-detecter</button>
                 <button onClick={() => { setAvailableModels([]); setSelectedModel(''); localStorage.removeItem('allo_meteo_model'); }} className="px-3 py-2 bg-white border rounded">Reset modèle</button>

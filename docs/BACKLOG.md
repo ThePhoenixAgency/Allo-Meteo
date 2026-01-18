@@ -2,7 +2,7 @@
 
 Ce fichier centralise le backlog du projet Allo‑Meteo (issues, tâches et décisions en suspens).
 
-Généré automatiquement par l'assistant. Date: 2026-01-11
+Généré automatiquement par l'assistant. Date: 2026-01-18
 
 ## Tâches principales
 
@@ -48,23 +48,34 @@ Généré automatiquement par l'assistant. Date: 2026-01-11
 | 38 | UX: ajouter sélecteur de modèle persisté et documenter comment l'utiliser (UI + README) | not-started |
 | 39 | Monitoring: ajouter endpoints metrics / prometheus pour `local-ai-mcp` et exporter métriques en conteneur | not-started |
 | 40 | CI: ajouter job de sécurité qui exécute `npm audit` et échoue sur CVE critiques | not-started |
+| 41 | Git: nettoyage des branches obsolètes (merge + suppression locale et remote) | completed |
+| 42 | Security: corriger SSRF dans index.tsx ligne 562 (fetch vers ipapi.co sans validation) | not-started |
+| 43 | DevOps: rendre les hooks Git exécutables (.husky/pre-commit et .husky/pre-push) | not-started |
 
 ---
 
 Notes & décisions en suspens:
 - Décider si l'absence de `GEMINI_API_KEY` doit rendre le CI fatal ou non (voir tâche 30).
 - Déterminer le owner pour le Job Trivy / CI (ex: "devops@thephoenixagency"), assigner dans la première PR.
+- **URGENT**: Corriger la vulnérabilité SSRF dans index.tsx (tâche 42) - requête non validée vers API externe
 
 ## Questions en suspens (consignées — l'assistant ne posera plus de questions)
 - Policy: faut-il rendre le CI fatal si `GEMINI_API_KEY` est absent ? (voir tâche 30)
 - Owner: qui est responsable du Job Trivy / CI ?
 - Publication: décider de la politique de publication NPM/GHCR (qui a accès aux secrets)
 - Priorité: prioriser le job Trivy (ID 3) ou l'audit/patch du Dockerfile (ID 5)
+- **Security**: Valider la correction SSRF (tâche 42) - implémenter whitelist d'URLs ou proxy sécurisé
 
 ## Notes de l'assistant
 Toutes les questions, propositions et décisions en suspens sont consignées ci-dessus.
 L'assistant n'émettra plus de questions actives — il documentera toute proposition ou décision dans ce fichier et attendra des instructions via Issues/PRs ou assignations dans le backlog.
 
-_Last updated: 2026-01-11_
+### Dernières actions (2026-01-18)
+- ✅ Nettoyage Git complet : merge de 3 branches non-mergées dans main
+- ✅ Suppression de 6 branches locales et 5 branches remote
+- ✅ Push des changements vers origin/main (c691dae..6e0c710)
+- ⚠️ Identification vulnérabilité SSRF dans index.tsx:562
+
+_Last updated: 2026-01-18_
 
 Si tu veux, je crée des Issues GitHub pour chaque item prioritaire et je fais une PR pour le job Trivy en premier lieu. (Me dire si tu veux que je priorise autre chose.)
