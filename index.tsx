@@ -13,7 +13,7 @@ import {
   Ticket, Github, User,
   Waves as FloodIcon, Zap as SeismicIcon, Cookie, Shield
 } from 'lucide-react';
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 /**
  * @file Allo-Météo & Route Expert - Version 3.4.0
@@ -150,7 +150,7 @@ async function decodeAudioData(
 
 const buildExpertPrompt = () => {
   const today = new Date().toLocaleDateString('fr-FR');
-  return `Tu es un assistant météo pour l'Oisans. RÉPONDS UNIQUEMENT avec le format EXACT ci-dessous. N'ajoute AUCUN texte d'introduction ni de conclusion.
+  return `Tu es un assistant météo pour l'OISANS. RÉPONDS UNIQUEMENT avec le format EXACT ci-dessous. N'ajoute AUCUN texte d'introduction ni de conclusion.
 
 FORMAT OBLIGATOIRE (respecte les balises EXACTEMENT):
 
@@ -176,15 +176,16 @@ Villard-Reculas : X°C
  [ROUTE]
  (Analyse du trafic en temps réel dans un rayon de 20km autour du Bourg d'Oisans - Sources: Waze / Google Maps / Itinisère)
  Statut Global: (Fluide/Ralenti/Accidents/Fermoirs)
- Incidents: (Détail de TOUS les accidents, bouchons ou routes coupées sur les principaux axes et directions du secteur Oisans)
+ Incidents: (Détail de TOUS les accidents, bouchons ou routes coupées sur les principaux axes et directions du secteur OISANS)
  
  [RISQUES]
  Sismique: (Faible/Modéré/Élevé ou "Aucune alerte en cours")
  Crues: (Vert/Jaune/Orange/Rouge ou "Aucune alerte en cours")
  
  [EVENEMENTS]
- - (Cherche les VRAIS événements sur oisans.com, alpedhuez.com et les2alpes.com)
+ - (Cherche les VRAIS événements sur OISANS.com, alpedhuez.com et les2alpes.com)
  - Priorité aux événements d'AUJOURD'HUI. Si peu nombreux, ajoute les événements majeurs de la SEMAINE à VENIR.
+ - Liste AU MOINS 3 événements RÉELS trouvés lors de la recherche.
  - Événement 1 (Date + Nom + Lieu)
  - Événement 2 (Date + Nom + Lieu)
  - Événement 3 (Date + Nom + Lieu)
@@ -195,11 +196,11 @@ Villard-Reculas : X°C
  INSTRUCTIONS CRITIQUES:
  - Date du jour: ${today}
  - RECHERCHE WEB OBLIGATOIRE :
-   1. TRAFIC: "état du trafic Oisans 20km radius", "accidents routes Oisans", "Waze Bourg d'Oisans real time"
-   2. AGENDA: oisans.com/agenda, alpedhuez.com/fr/hiver/agenda, les2alpes.com/fr/hiver/agenda
+   1. TRAFIC: "état du trafic OISANS 20km radius", "accidents routes OISANS", "Waze Bourg d'Oisans real time"
+   2. AGENDA: OISANS.com/agenda, alpedhuez.com/fr/hiver/agenda, les2alpes.com/fr/hiver/agenda
  - NE CHERCHE PAS Villard-Bonnot ni Espace Aragon.
  - Pour le TRAFIC : Ne nomme JAMAIS de numéros de routes (pas de RD1091, RD526, etc.). Parle uniquement en "Axes" et "Directions" (ex: Direction Grenoble, Axe stations). Rapporte les incidents de moins de 3 heures.
- - Si tu ne trouves rien de spécial, écris "Trafic fluide sur l'ensemble du secteur Oisans".
+ - Si tu ne trouves rien de spécial, écris "Trafic fluide sur l'ensemble du secteur OISANS".
  - RESPECTE EXACTEMENT le format avec les balises [SECTION]`;
 };
 
@@ -209,21 +210,17 @@ const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: stri
   }
 
   try {
-    const genAI = new GoogleGenerativeAI(process.env.API_KEY || '');
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
-    const result = await model.generateContent({
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash-exp',
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      tools: [
-        {
-          // @ts-ignore - Extension google search
-          googleSearch: {}
-        }
-      ],
+      config: {
+        tools: [{ googleSearch: {} } as any],
+      }
     });
 
-    const response = await result.response;
-    const text = response.text();
+    const text = response.text || '';
 
     return {
       text,
@@ -276,13 +273,13 @@ const fetchBulletinAudioWithFallback = async (prompt: string) => {
   // Priorité 1: Gemini TTS (production)
   if (hasGeminiKey) {
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-preview-tts',
-        contents: [{ parts: [{ text: prompt }] }],
+        model: 'gemini-2.0-flash-exp',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+          responseModalities: ['audio'],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
         },
       });
 
@@ -660,7 +657,7 @@ const App = () => {
     if (s.includes('analyse') || s.includes('scan')) return { bg: 'bg-indigo-600', text: 'text-white', icon: 'text-white', label: 'ANALYSE EN COURS', pulse: true };
     if (s.includes('accidents') || s.includes('fermé') || s.includes('coupée')) return { bg: 'bg-red-600', text: 'text-white', icon: 'text-white', label: 'ALERTE CRITIQUE', pulse: true };
     if (s.includes('ralenti') || s.includes('travaux') || s.includes('hivernal') || s.includes('établi')) return { bg: 'bg-orange-500', text: 'text-white', icon: 'text-white', label: 'TRAFIC PERTURBÉ', pulse: true };
-    return { bg: 'bg-emerald-500', text: 'text-white', icon: 'text-white', label: 'SITUATION', pulse: false };
+    return { bg: 'bg-emerald-500', text: 'text-white', icon: 'text-white', label: 'ÉTAT DU RÉSEAU', pulse: false };
   };
 
   const routeStyle = getRouteStyle(routeStatus);
@@ -904,8 +901,8 @@ const App = () => {
           <div className="flex items-center gap-6">
             <div className="bg-blue-600 p-3 rounded-2xl shadow-xl"><Sun className="text-white w-8 h-8 animate-slow-spin" /></div>
             <div>
-              <h1 className="font-black text-5xl tracking-tighter text-blue-900 leading-none uppercase italic">Allo-Météo</h1>
-              <span className="text-xs font-bold text-blue-500 tracking-[0.3em] uppercase">Oisans 2026</span>
+              <h1 className="font-black text-2xl tracking-tighter text-blue-900 leading-none uppercase italic">Allo-Météo</h1>
+              <span className="text-xs font-bold text-blue-500 tracking-[0.3em] uppercase">OISANS 2026</span>
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -1132,21 +1129,23 @@ const App = () => {
             </div>
           </section>
           <div onClick={() => window.open(REPO_URL, '_blank')} className="bg-slate-900 p-10 rounded-[3rem] text-white flex justify-between items-center group cursor-pointer active:scale-95 transition-all shadow-2xl border-b-[8px] border-slate-800">
-            <div className="flex items-center gap-5"><Github className="w-10 h-10 text-white" /><div><p className="text-[9px] font-black uppercase text-blue-400 mb-1 tracking-widest">ALLO-MÉTÉO</p><p className="text-2xl font-black uppercase italic leading-none">Oisans 2026</p></div></div>
+            <div className="flex items-center gap-5"><Github className="w-10 h-10 text-white" /><div><p className="text-[9px] font-black uppercase text-blue-400 mb-1 tracking-widest">ALLO-MÉTÉO</p><p className="text-2xl font-black uppercase italic leading-none">OISANS 2026</p></div></div>
             <ExternalLink className="w-6 h-6 text-white/30 group-hover:text-white" />
           </div>
         </aside>
       </main>
-      <footer className="max-w-7xl mx-auto px-4 mt-8 py-8 border-t border-slate-200 text-center">
-        <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.5em] mb-4">© 2026 ALLO-MÉTÉO OISANS</p>
-        <a
-          href="http://ThePhoenixAgency.github.io"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 font-black uppercase text-[10px] tracking-widest transition-all hover:gap-3"
-        >
-          Lien vers PhoenixProject <ExternalLink className="w-3 h-3" />
-        </a>
+      <footer className="w-full mt-8 py-10 bg-slate-950 text-center border-t border-slate-800 flex flex-col items-center justify-center">
+        <div className="max-w-4xl mx-auto px-4 flex flex-col items-center">
+          <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.6em] mb-4 italic">© 2026 ALLO-MÉTÉO OISANS</p>
+          <a
+            href="http://ThePhoenixAgency.github.io"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-3 text-blue-500 hover:text-blue-400 font-black uppercase text-[9px] tracking-[0.2em] transition-all hover:gap-4 group"
+          >
+            PhoenixProject <ExternalLink className="w-3 h-3 text-blue-600 transition-transform group-hover:translate-x-1" />
+          </a>
+        </div>
       </footer>
     </div>
   );
