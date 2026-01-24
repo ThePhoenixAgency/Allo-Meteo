@@ -36,7 +36,7 @@ const STATIONS_COORDS = {
   "Villard-Reculas": { lat: 45.0942, lon: 6.0309 }
 };
 const hasGeminiKey = Boolean(process.env.API_KEY);
-const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes pour économiser les tokens Gemini
+const AUTO_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 heures (2 fois par jour)
 const USER_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - considère l'utilisateur inactif après ce délai
 const COOKIE_EXPIRY_DAYS = 395; // 13 mois (conformité RGPD max)
 const TEXT_COOLDOWN_MS = 5000;
@@ -183,58 +183,47 @@ Villard-Reculas : X°C
  Crues: (Vert/Jaune/Orange/Rouge ou "Aucune alerte en cours")
  
  [EVENEMENTS]
- - (Cherche les VRAIS événements sur oisans.com, alpedhuez.com et les2alpes.com)
- - Priorité aux événements d'AUJOURD'HUI. Si peu nombreux, ajoute les événements majeurs de la SEMAINE à VENIR.
- - Indique clairement la DATE pour chaque événement (ex: "Aujourd'hui: Nom", "Lundi 26: Nom").
+ - (Cherche sur oisans.com/agenda, alpedhuez.com et les2alpes.com)
+ - Priorité aux événements de la SEMAINE à VENIR (${today} au ${new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('fr-FR')}).
  - Événement 1 (Date + Nom + Lieu)
  - Événement 2 (Date + Nom + Lieu)
  - Événement 3 (Date + Nom + Lieu)
- 
+ - Si RIEN n'est trouvé, écris : "Aucun événement majeur cette semaine"
+
  [LUNE]
  Phase actuelle de la lune
- 
+
  INSTRUCTIONS CRITIQUES:
  - Date du jour: ${today}
  - RECHERCHE WEB OBLIGATOIRE SUR LES SITES RÉELS :
    1. TRAFIC: google.com/search?q=info+trafic+RD1091+Waze+Itinisere+accidents+Oisans
    2. AGENDA: oisans.com/agenda, alpedhuez.com/fr/hiver/agenda, les2alpes.com/hiver/agenda
  - NE CHERCHE PAS Villard-Bonnot ni Espace Aragon.
- - Pour le TRAFIC : Cherche les accidents, bouchons ou routes coupées RÉELS de moins de 3 heures.
- - Pour les EVENEMENTS : Liste d'abord ceux de ${today}, puis complète avec les événements phares jusqu'à J+7.
- - RESPECTE EXACTEMENT le format avec les balises [SECTION]`;
+ - Pour le TRAFIC : Cherche les accidents, bouchons ou routes coupées RÉELS de moins de 12 heures.
+ - Si tu ne trouves pas d'info trafic spécifique, écris "Trafic fluide sur tout l'axe Oisans".
+ - RESPECTE EXACTEMENT les balises [SECTION]`;
 };
 
 const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: string; sources: any[] }> => {
-  // Gemini OBLIGATOIRE pour la recherche web (météo, stations, etc.)
   if (!hasGeminiKey) {
-    throw new Error('❌ Clé API Gemini requise. Configurez GEMINI_API_KEY dans .env');
+    throw new Error('❌ Clé API Gemini requise');
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-      },
+    const genAI = new GoogleGenAI(process.env.API_KEY || '');
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      tools: [{ googleSearch: {} } as any],
     });
 
-    const text = response.text || '';
-
-    // Vérifier que la réponse contient bien les balises requises
-    const requiredSections = ['[METEO]', '[STATIONS]', '[ROUTE]', '[RISQUES]', '[LUNE]'];
-    const missingSections = requiredSections.filter(section => !text.includes(section));
-
-    if (missingSections.length > 0) {
-      console.warn('⚠️ Sections manquantes dans la réponse Gemini:', missingSections);
-      // On continue quand même, l'UI gèrera les sections manquantes
-    }
+    const response = await result.response;
+    const text = response.text();
 
     return {
       text,
-      sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [],
-      perf: { latencyMs: 0, model: 'gemini', tokens: 0 }
+      sources: (response as any).candidates?.[0]?.groundingMetadata?.groundingChunks || [],
     };
   } catch (error: any) {
     console.error('❌ Erreur Gemini API:', error);
@@ -571,19 +560,11 @@ const App = () => {
       console.info('📦 Utilisation cache IA - expire dans', Math.round((AUTO_REFRESH_INTERVAL_MS - (Date.now() - parseInt(lastFetch))) / 60000), 'min');
     }
 
-    // Auto-refresh toutes les AUTO_REFRESH_INTERVAL_MS (mais seulement si utilisateur actif)
-    const refreshTimer = setInterval(() => {
-      if (isUserActive()) {
-        console.info('🔄 Auto-refresh IA (utilisateur actif)');
-        fetchExpertData();
-      } else {
-        console.info('⏸️ Auto-refresh annulé (pas d\'utilisateur actif)');
-      }
-    }, AUTO_REFRESH_INTERVAL_MS);
+    // Pas de background refresh automatique tant que l'onglet est ouvert
+    // Le refresh se fait uniquement à l'ouverture/rechargement si le cache de 12h est expiré.
 
     return () => {
       clearInterval(timer);
-      clearInterval(refreshTimer);
       stopAudio();
     };
   }, []);
@@ -651,31 +632,29 @@ const App = () => {
     ? (risquesText.match(/sismique\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Aucune alerte en cours")
     : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte en cours" : "IA indisponible"));
   const risqueCrues = hasRisquesData
-    ? (risquesText.match(/crues\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Pas d'alerte")
-    : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte" : "IA indisponible"));
+    ? (risquesText.match(/crues\s?[:\-]?\s?([^,.\n\[]+)/i)?.[1] || "Pas de données")
+    : (isLoading ? "Analyse..." : (hasAnyAIData ? "Vigilance Verte" : "IA indisponible"));
 
   const getAlertStyle = (text: string) => {
     const t = text.toLowerCase();
     if (t.includes('rouge')) return { bg: 'bg-red-500 border-red-400', title: 'DANGER ROUGE', text: 'text-white', icon: 'text-white', pulse: true, label: 'ALERTE MAXIMALE' };
     if (t.includes('orange')) return { bg: 'bg-orange-500 border-orange-400', title: 'VIGILANCE ORANGE', text: 'text-white', icon: 'text-white', pulse: true, label: 'PRUDENCE ACCRUE' };
     if (t.includes('jaune')) return { bg: 'bg-yellow-400 border-yellow-300', title: 'VIGILANCE JAUNE', text: 'text-yellow-950', icon: 'text-yellow-900', pulse: false, label: 'SOYEZ ATTENTIF' };
-    if (t.includes('vert') || t.includes('aucune') || t.includes('pas d')) return { bg: 'bg-emerald-500 border-emerald-400', title: 'VIGILANCE VERTE', text: 'text-white', icon: 'text-white', pulse: false, label: 'SITUATION CALME' };
-    return { bg: 'bg-slate-100 border-slate-200', title: 'ANALYSE...', text: 'text-slate-500', icon: 'text-slate-400', pulse: false, label: 'RECHERCHE IA' };
+    return { bg: 'bg-emerald-500 border-emerald-400', title: 'VIGILANCE VERTE', text: 'text-white', icon: 'text-white', pulse: false, label: 'SITUATION CALME' };
   };
 
   const floodStyle = getAlertStyle(risqueCrues);
   const seismicStyle = getAlertStyle(risqueSismique);
 
   const routeContent = getSection('ROUTE');
-  const routeStatus = routeContent.match(/statut\s?:\s?([^.\n]+)/i)?.[1]?.trim() || "Information Indisponible";
-  const routeDetails = routeContent.match(/détails\s?:\s?([^.\n]+)/i)?.[1]?.trim() || "";
+  const routeStatus = routeContent.match(/statut\s?[:\-]?\s?([^.\n\[]+)/i)?.[1]?.trim() || "Trafic Fluide";
+  const routeDetails = routeContent.match(/détails\s?[:\-]?\s?([^.\n\[]+)/i)?.[1]?.trim() || "Aucun incident signalé";
 
   const getRouteStyle = (status: string) => {
     const s = status.toLowerCase();
     if (s.includes('accident') || s.includes('fermé') || s.includes('coupée')) return { bg: 'bg-red-600', text: 'text-white', icon: 'text-white', label: 'ALERTE CRITIQUE', pulse: true };
-    if (s.includes('ralenti') || s.includes('travaux') || s.includes('hivernal')) return { bg: 'bg-orange-500', text: 'text-white', icon: 'text-white', label: 'TRAFIC PERTURBÉ', pulse: true };
-    if (s.includes('fluide')) return { bg: 'bg-emerald-500', text: 'text-white', icon: 'text-white', label: 'TRAFIC FLUIDE', pulse: false };
-    return { bg: 'bg-slate-100', text: 'text-slate-500', icon: 'text-slate-400', label: 'EN ANALYSE', pulse: false };
+    if (s.includes('ralenti') || s.includes('travaux') || s.includes('hivernal') || s.includes('établi')) return { bg: 'bg-orange-500', text: 'text-white', icon: 'text-white', label: 'TRAFIC PERTURBÉ', pulse: true };
+    return { bg: 'bg-emerald-500', text: 'text-white', icon: 'text-white', label: 'TRAFIC FLUIDE', pulse: false };
   };
 
   const routeStyle = getRouteStyle(routeStatus);
@@ -964,8 +943,13 @@ const App = () => {
                 </div>
                 <div className="flex flex-col gap-4 w-full max-w-sm">
                   <div className="p-8 bg-white/10 rounded-[2.5rem] border border-white/10 backdrop-blur-md">
-                    <p className="text-[10px] font-black text-blue-300 uppercase tracking-widest mb-2">Conditions {LOCATION}</p>
-                    <p className="text-3xl font-black uppercase italic tracking-tighter leading-tight">{meteoText.match(/ciel\s?:\s?([^,.]+)/i)?.[1] || "Chargement..."}</p>
+                    <div className="mb-3">
+                      <p className="text-xl font-bold text-blue-200 tracking-widest leading-none mb-1">38520</p>
+                      <p className="text-2xl font-black text-white uppercase tracking-tighter italic leading-none">LE BOURG D'OISANS</p>
+                    </div>
+                    <p className="text-xl font-bold text-blue-100 uppercase italic tracking-tight opacity-90">
+                      {meteoText.match(/ciel\s?:\s?([^,.]+)/i)?.[1] || (manualWeather ? "Ciel dégagé" : "Actualisation...")}
+                    </p>
                   </div>
                   {hasInversion && (
                     <div className="p-6 bg-orange-500/20 rounded-[2rem] border-2 border-orange-400/50 flex items-center gap-4 animate-pulse">
