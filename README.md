@@ -132,10 +132,6 @@ document.cookie.split(";").forEach(c => document.cookie = c.trim().split("=")[0]
 - ✅ **Auto-merge** : si tests passent (sauf Dependabot)
 - ✅ **Vercel deploy** : automatique sur merge main
 
-#### Nettoyage Code
-- ❌ Supprimé package `local-ai-mcp` (non utilisé)
-- 📉 **-1042 lignes** de code supprimées
-
 ### 2026-01-18 - Nettoyage & Améliorations
 - Ajout timeout sur requêtes API externes
 - Validation améliorée des réponses API

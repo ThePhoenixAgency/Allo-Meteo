@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  Sun, Cloud, CloudRain, CloudSun, CloudSnow,
-  Mountain, Thermometer, Volume2, MapPin,
-  Wind, Droplets, Loader2, Play, Square,
-  Waves, Snowflake, Eye, Gauge, Droplet, Moon,
-  Clock, ShieldAlert, Mail, CheckCircle2, Info,
-  TrendingUp, Radio, Zap, ShieldCheck, ExternalLink,
-  ArrowRight, AlertTriangle, Activity, Menu, X,
-  Pause, Car, Construction, Navigation, Siren,
-  Sunrise, Sunset, MoonStar, CalendarDays, Sparkles,
-  Ticket, Github, User, ArrowUpRight, ArrowDownRight,
+  Sun, CloudRain, CloudSnow,
+  Mountain, Volume2,
+  Droplets, Loader2, Square,
+  Gauge, Moon,
+  Mail, CheckCircle2,
+  TrendingUp, ExternalLink,
+  Activity, X,
+  Siren,
+  MoonStar, CalendarDays, Sparkles,
+  Ticket, Github, User,
   Waves as FloodIcon, Zap as SeismicIcon, Cookie, Shield
 } from 'lucide-react';
 import { GoogleGenAI, Modality } from "@google/genai";
@@ -39,19 +39,12 @@ const hasGeminiKey = Boolean(process.env.API_KEY);
 const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes pour économiser les tokens Gemini
 const USER_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - considère l'utilisateur inactif après ce délai
 const COOKIE_EXPIRY_DAYS = 395; // 13 mois (conformité RGPD max)
+const TEXT_COOLDOWN_MS = 5000;
+const TTS_COOLDOWN_MS = 5000;
 
-// IA locale optionnelle (UNIQUEMENT pour TTS audio en fallback)
-// L'IA locale N'A PAS accès à internet donc ne peut PAS remplacer Gemini pour la météo
-const LOCAL_AI_BASE_URLS = [
-  'http://localhost:1234',      // LM Studio par défaut
-  'http://localhost:8080',      // Ollama
-  'http://localhost:11434',     // Ollama alternatif
-  'http://127.0.0.1:1234',
-  'http://127.0.0.1:8080',
-];
-
+// Fallback TTS endpoints
 const LOCAL_TTS_ENDPOINTS = [
-  '/v1/audio/speech',           // OpenAI compatible TTS
+  '/v1/audio/speech',
   '/tts',
   '/api/tts',
 ];
@@ -234,6 +227,7 @@ const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: stri
     return {
       text,
       sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [],
+      perf: { latencyMs: 0, model: 'gemini', tokens: 0 }
     };
   } catch (error: any) {
     console.error('❌ Erreur Gemini API:', error);
@@ -305,6 +299,7 @@ const fetchBulletinAudioWithFallback = async (prompt: string) => {
 
   // Priorité 2: TTS local (fallback si branché)
   console.info('🔍 Recherche d\'un serveur TTS local en fallback...');
+  const LOCAL_AI_BASE_URLS = ['http://localhost:1234', 'http://localhost:8080', 'http://localhost:11434'];
   for (const base of LOCAL_AI_BASE_URLS) {
     for (const path of LOCAL_TTS_ENDPOINTS) {
       const audio = await tryLocalTtsEndpoint(base, path, prompt);
@@ -328,21 +323,10 @@ const App = () => {
   const [expertData, setExpertData] = useState<any>(null);
   const [newsletterSubscribed, setNewsletterSubscribed] = useState(false);
   const [manualWeather, setManualWeather] = useState<ManualWeather | null>(null);
+  const [stationWeather, setStationWeather] = useState<{ [key: string]: string }>({});
   const [manualLoading, setManualLoading] = useState(false);
-  const [lastPerf, setLastPerf] = useState<any>({});
-  const [selectedModel, setSelectedModel] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_model') || '') : ''));
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [aiEndpoint, setAiEndpoint] = useState<string | null>(null);
   const textCooldownRef = useRef<number>(0);
   const ttsCooldownRef = useRef<number>(0);
-  const [textCooldownRemaining, setTextCooldownRemaining] = useState(0);
-  const [ttsCooldownRemaining, setTtsCooldownRemaining] = useState(0);
-
-  // MCP configuration (external micro-MCP server)
-  const [mcpUrl, setMcpUrl] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_url') || '') : ''));
-  const [mcpHost, setMcpHost] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_host') || LOCAL_AI_BASE_URLS[0]) : LOCAL_AI_BASE_URLS[0]));
-  const [mcpSecret, setMcpSecret] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_secret') || '') : ''));
-  const [mcpStatus, setMcpStatus] = useState<any>(null);
 
   // État RGPD
   const [showCookieBanner, setShowCookieBanner] = useState<boolean>(false);
@@ -359,9 +343,6 @@ const App = () => {
     try {
       const now = Date.now();
       if (now - (textCooldownRef.current || 0) < TEXT_COOLDOWN_MS) {
-        const remaining = TEXT_COOLDOWN_MS - (now - (textCooldownRef.current || 0));
-        setLastPerf((p: any) => ({ ...p, rateLimitedUntil: Date.now() + remaining }));
-        console.warn('Skipped fetchExpertData due to rate limit', remaining);
         setGlobalLoading(false);
         return;
       }
@@ -371,14 +352,8 @@ const App = () => {
       const res = await fetchExpertTextWithFallback(prompt);
       const rawText = res.text || '';
       const cleanText = rawText.replace(/[\*#_>`~]/g, '');
-      console.info('Expert text fetched. excerpt:', cleanText.slice(0, 400));
-      console.debug('Expert sources:', res.sources, 'perf:', res.perf);
       setExpertData({ text: cleanText, sources: res.sources });
-
-      // Sauvegarder timestamp pour cache
       localStorage.setItem('lastAIFetch', Date.now().toString());
-
-      if (res.perf) setLastPerf((p: any) => ({ ...p, textLatencyMs: res.perf.latencyMs, model: res.perf.model, tokens: res.perf.tokens }));
     } catch (error) {
       console.error('Expert fetch failed:', error);
       setExpertData({ text: 'Analyse météorologique temporairement indisponible. Veuillez rafraîchir la page.', sources: [] });
@@ -388,22 +363,9 @@ const App = () => {
   };
 
   useEffect(() => {
-    try {
-      if (selectedModel && selectedModel.trim()) localStorage.setItem('allo_meteo_model', selectedModel.trim());
-      else localStorage.removeItem('allo_meteo_model');
-      // re-fetch to re-probe endpoints with preferred model
-      fetchExpertData();
-    } catch (e) { }
-  }, [selectedModel]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const now = Date.now();
-      setTextCooldownRemaining(Math.max(0, TEXT_COOLDOWN_MS - Math.max(0, now - (textCooldownRef.current || 0))));
-      setTtsCooldownRemaining(Math.max(0, TTS_COOLDOWN_MS - Math.max(0, now - (ttsCooldownRef.current || 0))));
-    }, 500);
-    return () => clearInterval(timer);
+    // Local model logic removed
   }, []);
+
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
@@ -411,34 +373,45 @@ const App = () => {
   const fetchManualWeather = async () => {
     try {
       setManualLoading(true);
-      const url = `https://www.prevision-meteo.ch/services/json/lat=${LOCATION_COORDS.lat}lng=${LOCATION_COORDS.lon}`;
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Prevision-Meteo répond ${response.status}`);
-      }
-      const data = await response.json();
-      const current = data.current_condition;
 
-      if (current) {
-        // Convertir la direction du vent en degrés
+      // 1. Fetch Bourg d'Oisans (Main)
+      const mainUrl = `https://www.prevision-meteo.ch/services/json/lat=${LOCATION_COORDS.lat}lng=${LOCATION_COORDS.lon}`;
+      const mainRes = await fetch(mainUrl);
+      const mainData = await mainRes.json();
+      if (mainData.current_condition) {
+        const current = mainData.current_condition;
         const windDirMap: { [key: string]: number } = {
           'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
           'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
           'S': 180, 'SSW': 202.5, 'SW': 225, 'WSW': 247.5,
           'W': 270, 'WNW': 292.5, 'NW': 315, 'NNW': 337.5
         };
-        const windDirection = windDirMap[current.wnd_dir] ?? 0;
-
         setManualWeather({
           temperature: parseFloat(current.tmp),
           windspeed: parseFloat(current.wnd_spd),
-          winddirection: windDirection,
+          winddirection: windDirMap[current.wnd_dir] ?? 0,
           humidity: parseFloat(current.humidity),
           pressure: parseFloat(current.pressure),
-          precipitation: 0, // API ne fournit pas les précipitations actuelles
+          precipitation: 0,
           timestamp: new Date().toISOString(),
         });
       }
+
+      // 2. Fetch All Other Stations
+      const stationsResults: { [key: string]: string } = {};
+      for (const [name, coords] of Object.entries(STATIONS_COORDS)) {
+        try {
+          const res = await fetch(`https://www.prevision-meteo.ch/services/json/lat=${coords.lat}lng=${coords.lon}`);
+          const data = await res.json();
+          if (data.current_condition) {
+            stationsResults[name] = `${data.current_condition.tmp}°C`;
+          }
+        } catch (e) {
+          console.warn(`Failed to fetch weather for ${name}`);
+        }
+      }
+      setStationWeather(stationsResults);
+
     } catch (error) {
       console.error('Manual weather fetch failed', error);
     } finally {
@@ -446,35 +419,6 @@ const App = () => {
     }
   };
 
-  const detectLocalModels = async () => {
-    console.info('🔍 Détection des modèles IA locaux...');
-    for (const base of LOCAL_AI_BASE_URLS) {
-      try {
-        const res = await fetch(`${base}/v1/models`, {
-          signal: AbortSignal.timeout(5000) // 5s timeout
-        });
-        if (!res.ok) continue;
-        const json = await res.json();
-
-        let models: string[] = [];
-        if (Array.isArray(json.data)) models = json.data.map((m: any) => m.id).filter(Boolean);
-        else if (Array.isArray(json.models)) models = json.models.map((m: any) => m.id || m.name).filter(Boolean);
-        else if (Array.isArray(json)) models = json.map((m: any) => (m.id || m)).filter(Boolean);
-
-        if (models.length) {
-          setAvailableModels(models);
-          setAiEndpoint(base);
-          console.info('✅ IA locale détectée:', base, '- Modèles:', models.slice(0, 5).join(', '));
-          return;
-        }
-      } catch (e) {
-        // Silencieux - normal si aucune IA locale
-      }
-    }
-    setAvailableModels([]);
-    setAiEndpoint(null);
-    console.info('ℹ️ Aucune IA locale détectée (mode Gemini uniquement)');
-  };
 
   // Marque l'activité utilisateur pour déclencher les requêtes API
   const markUserActivity = () => {
@@ -609,7 +553,6 @@ const App = () => {
 
     // Toujours fetch la météo basique (pas coûteux)
     fetchManualWeather();
-    detectLocalModels();
 
     // Fetch IA seulement si utilisateur actif ET cache expiré
     if (isUserActive() && cacheExpired) {
@@ -662,9 +605,6 @@ const App = () => {
     if (isPlaying) { stopAudio(); return; }
     const now = Date.now();
     if (now - (ttsCooldownRef.current || 0) < TTS_COOLDOWN_MS) {
-      const remaining = TTS_COOLDOWN_MS - (now - (ttsCooldownRef.current || 0));
-      setLastPerf((p: any) => ({ ...p, rateLimitedUntil: Date.now() + remaining }));
-      console.warn('Skipped playWeatherBulletin due to TTS rate limit', remaining);
       return;
     }
     setLoading(true);
@@ -673,12 +613,10 @@ const App = () => {
       CONSIGNE PHONÉTIQUE : Prononce TRÈS DISTINCTEMENT les terminaisons. 
       Dis clairement : LES DEUZZZZ ALPEs, BOUR D'OISAN, OZZZZ EN OISAN, ALPE D'HUEZZZZ.
       Données : ${expertData?.text}`;
-      const { audio: base64Audio, perf } = await fetchBulletinAudioWithFallback(promptText);
+      const { audio: base64Audio } = await fetchBulletinAudioWithFallback(promptText);
       if (!base64Audio) { setLoading(false); return; }
 
       ttsCooldownRef.current = Date.now();
-      if (perf) setLastPerf((p: any) => ({ ...p, audioLatencyMs: perf.latencyMs, model: perf.model }));
-      try { console.info('Fetched audio length:', base64Audio.length); } catch (e) { }
 
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       const audioBuffer = await decodeAudioData(decodeBase64(base64Audio), audioContextRef.current, 24000, 1);
@@ -693,7 +631,6 @@ const App = () => {
   };
 
   const meteoText = getSection('METEO');
-  const stationsText = getSection('STATIONS');
   const risquesText = getSection('RISQUES');
   const inversion = getSection('INVERSION');
 
@@ -707,8 +644,21 @@ const App = () => {
     ? (risquesText.match(/sismique\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Aucune alerte en cours")
     : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte en cours" : "IA indisponible"));
   const risqueCrues = hasRisquesData
-    ? (risquesText.match(/crues\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Aucune alerte en cours")
-    : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte en cours" : "IA indisponible"));
+    ? (risquesText.match(/crues\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Pas d'alerte")
+    : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte" : "IA indisponible"));
+
+  const getAlertStyle = (text: string) => {
+    const t = text.toLowerCase();
+    if (t.includes('rouge')) return { bg: 'bg-red-500 border-red-400', title: 'DANGER ROUGE', text: 'text-white', icon: 'text-white', pulse: true, label: 'ALERTE MAXIMALE' };
+    if (t.includes('orange')) return { bg: 'bg-orange-500 border-orange-400', title: 'VIGILANCE ORANGE', text: 'text-white', icon: 'text-white', pulse: true, label: 'PRUDENCE ACCRUE' };
+    if (t.includes('jaune')) return { bg: 'bg-yellow-400 border-yellow-300', title: 'VIGILANCE JAUNE', text: 'text-yellow-950', icon: 'text-yellow-900', pulse: false, label: 'SOYEZ ATTENTIF' };
+    if (t.includes('vert') || t.includes('aucune') || t.includes('pas d')) return { bg: 'bg-emerald-500 border-emerald-400', title: 'VIGILANCE VERTE', text: 'text-white', icon: 'text-white', pulse: false, label: 'SITUATION CALME' };
+    return { bg: 'bg-slate-100 border-slate-200', title: 'ANALYSE...', text: 'text-slate-500', icon: 'text-slate-400', pulse: false, label: 'RECHERCHE IA' };
+  };
+
+  const floodStyle = getAlertStyle(risqueCrues);
+  const seismicStyle = getAlertStyle(risqueSismique);
+  const hasCriticalAlert = risqueCrues.toLowerCase().includes('orange') || risqueCrues.toLowerCase().includes('rouge') || risqueSismique.toLowerCase().includes('orange') || risqueSismique.toLowerCase().includes('rouge');
 
   const manualTemperature = manualWeather?.temperature !== undefined ? manualWeather.temperature.toFixed(1) : null;
   const manualHumidityValue = manualWeather?.humidity ?? null;
@@ -763,11 +713,11 @@ const App = () => {
   };
 
   const manualSummaryLine = manualWeather
-    ? `Prevision-Meteo.ch ${new Date(manualWeather.timestamp).toLocaleTimeString('fr-FR')} • ${manualWeather.temperature.toFixed(1)}°C • Vent ${manualWeather.windspeed.toFixed(0)} km/h`
+    ? `Prevision-Meteo.ch ${new Date(manualWeather.timestamp).toLocaleTimeString('fr-FR')} • ${manualWeather.temperature.toFixed(1)}°C`
     : '';
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans pb-16">
+    <div className="min-h-screen w-full bg-[#F8FAFC] text-slate-900 font-sans pb-16">
       <style>{spinAnimation}</style>
 
       {/* Bandeau RGPD Conforme */}
@@ -943,8 +893,8 @@ const App = () => {
         </div>
       )}
 
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm pt-[max(env(safe-area-inset-top),20px)] pb-2 px-2">
+        <div className="max-w-7xl mx-auto px-4 h-24 flex items-center justify-between">
           <div className="flex items-center gap-6">
             <div className="bg-blue-600 p-3 rounded-2xl shadow-xl"><Sun className="text-white w-8 h-8 animate-slow-spin" /></div>
             <div>
@@ -953,11 +903,6 @@ const App = () => {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="bg-white/90 px-3 py-2 rounded-lg font-bold text-sm border">
-              <option value="">Auto (détecte local)</option>
-              {availableModels.length ? availableModels.map(m => <option key={m} value={m}>{m}</option>) : <option disabled>Aucun modèle local détecté</option>}
-              <option value="custom">Custom (mettre via localStorage)</option>
-            </select>
             <button onClick={playWeatherBulletin} className={`flex items-center gap-4 px-8 py-4 rounded-[2rem] font-black transition-all shadow-2xl active:scale-95 ${isPlaying ? 'bg-red-500 text-white animate-pulse' : 'bg-blue-600 text-white'}`}>
               {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : (isPlaying ? <Square className="w-6 h-6 fill-current" /> : <Volume2 className="w-6 h-6" />)}
               <span className="text-lg uppercase">{isPlaying ? "STOP" : "BULLETIN"}</span>
@@ -968,20 +913,35 @@ const App = () => {
 
       <main className="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-8 space-y-10">
-          <section className="bg-gradient-to-br from-blue-700 to-indigo-900 rounded-[3rem] p-10 text-white shadow-2xl relative overflow-hidden border-b-[10px] border-blue-500">
+          {hasCriticalAlert && (
+            <div className="bg-red-600 text-white p-6 rounded-[2.5rem] flex items-center gap-6 shadow-2xl animate-pulse border-b-8 border-red-800">
+              <Siren className="w-12 h-12 shrink-0" />
+              <div>
+                <h3 className="font-black text-2xl uppercase italic">Alerte Vigilance en Cours</h3>
+                <p className="font-bold opacity-90 text-sm">Consultez les détails des risques crues et sismiques ci-dessous.</p>
+              </div>
+            </div>
+          )}
+          <section className="bg-gradient-to-br from-blue-700 to-indigo-900 rounded-[3rem] p-10 pt-6 text-white shadow-2xl relative border-b-[10px] border-blue-500">
             <div className="relative z-10">
-              <div className="flex items-center gap-4 text-blue-100 font-black text-2xl uppercase mb-8">
+              <div className="flex items-center gap-4 text-blue-100 font-black text-2xl uppercase mb-10">
                 <CalendarDays className="w-8 h-8" />
                 {new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(currentTime)}
                 <span className="text-white/30 font-light mx-2">|</span>
                 <span className="text-white">{currentTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
               </div>
-              <div className="flex flex-wrap items-center gap-10">
-                <div className="bg-white/10 backdrop-blur-3xl p-8 rounded-full border border-white/20 flex flex-col items-center justify-center min-w-[260px] min-h-[260px] weather-badge-glow">
-                  {globalLoading ? <Loader2 className="w-20 h-20 animate-spin text-white/50" /> : <Sun className="w-32 h-32 text-yellow-400 animate-slow-spin" />}
-                  <div className="absolute bottom-4 bg-blue-600 px-7 py-2 rounded-full font-black text-4xl shadow-2xl border-2 border-white/50">{currentTemp}°C</div>
+              <div className="flex flex-col items-center justify-center gap-24 mb-16">
+                <div className="bg-white/10 backdrop-blur-3xl p-8 rounded-full border border-white/20 flex flex-col items-center justify-center min-w-[260px] min-h-[260px] weather-badge-glow relative">
+                  {globalLoading ? (
+                    <Loader2 className="w-20 h-20 animate-spin text-white/50" />
+                  ) : (
+                    <Sun className="w-32 h-32 text-yellow-400 animate-slow-spin" />
+                  )}
+                  <div className="absolute -bottom-12 bg-blue-600 px-8 py-4 rounded-[1.5rem] font-black text-5xl shadow-2xl border-4 border-white/30 z-20">
+                    {currentTemp}°C
+                  </div>
                 </div>
-                <div className="flex flex-col gap-4 flex-1 min-w-[300px]">
+                <div className="flex flex-col gap-4 w-full max-w-sm">
                   <div className="p-8 bg-white/10 rounded-[2.5rem] border border-white/10 backdrop-blur-md">
                     <p className="text-[10px] font-black text-blue-300 uppercase tracking-widest mb-2">Conditions {LOCATION}</p>
                     <p className="text-3xl font-black uppercase italic tracking-tighter leading-tight">{meteoText.match(/ciel\s?:\s?([^,.]+)/i)?.[1] || "Chargement..."}</p>
@@ -1034,19 +994,16 @@ const App = () => {
                   {globalLoading ? (
                     <tr><td colSpan={2} className="px-6 py-12 text-center"><Loader2 className="w-10 h-10 animate-spin text-blue-600 mx-auto" /></td></tr>
                   ) : (
-                    stationsText.split('\n').filter(s => s.includes(':') || s.includes('-')).map((line, idx) => {
-                      const sepIndex = line.lastIndexOf(':') !== -1 ? line.lastIndexOf(':') : line.lastIndexOf('-');
-                      if (sepIndex === -1) return null;
-                      const name = line.substring(0, sepIndex).trim();
-                      const val = line.substring(sepIndex + 1).trim();
-                      if (!name || name.length < 2) return null;
-                      return (
+                    (Object.keys(stationWeather).length > 0) ? (
+                      Object.entries(stationWeather).map(([name, val], idx) => (
                         <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
                           <td className="px-6 py-5 font-bold text-slate-700 uppercase tracking-tight">{name}</td>
                           <td className="px-6 py-5 font-black text-blue-600 text-right text-xl">{val}</td>
                         </tr>
-                      );
-                    })
+                      ))
+                    ) : (
+                      <tr><td colSpan={2} className="px-6 py-12 text-center text-slate-400 font-bold italic">Données stations indisponibles</td></tr>
+                    )
                   )}
                 </tbody>
               </table>
@@ -1055,15 +1012,25 @@ const App = () => {
 
           <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
-              <h3 className="text-xl font-black mb-6 flex items-center gap-4 uppercase text-red-600"><SeismicIcon className="w-8 h-8" /> RISQUE SISMIQUE</h3>
-              <div className="p-6 bg-red-50 rounded-[2rem] border-2 border-red-100">
-                <p className="text-lg font-bold text-red-900 italic">{risqueSismique}</p>
+              <h3 className="text-xl font-black mb-6 flex items-center gap-4 uppercase text-slate-900"><SeismicIcon className="w-8 h-8 text-red-500" /> RISQUE SISMIQUE</h3>
+              <div className={`p-8 rounded-[2.5rem] border-b-8 transition-all flex flex-col items-center gap-4 ${seismicStyle.bg} ${seismicStyle.pulse ? 'animate-pulse' : ''}`}>
+                <div className="bg-white/20 p-4 rounded-full"><SeismicIcon className={`w-12 h-12 ${seismicStyle.icon}`} /></div>
+                <div className="text-center">
+                  <p className={`text-[10px] font-black uppercase tracking-widest mb-1 opacity-80 ${seismicStyle.text}`}>{seismicStyle.label}</p>
+                  <p className={`text-2xl font-black uppercase italic leading-none ${seismicStyle.text}`}>{seismicStyle.title}</p>
+                  <p className={`text-xs mt-3 font-bold opacity-70 ${seismicStyle.text}`}>{risqueSismique}</p>
+                </div>
               </div>
             </div>
             <div className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
-              <h3 className="text-xl font-black mb-6 flex items-center gap-4 uppercase text-blue-600"><FloodIcon className="w-8 h-8" /> RISQUE DE CRUES</h3>
-              <div className="p-6 bg-blue-50 rounded-[2rem] border-2 border-blue-100">
-                <p className="text-lg font-bold text-blue-900 italic">{risqueCrues}</p>
+              <h3 className="text-xl font-black mb-6 flex items-center gap-4 uppercase text-slate-900"><FloodIcon className="w-8 h-8 text-blue-500" /> RISQUE DE CRUES</h3>
+              <div className={`p-8 rounded-[2.5rem] border-b-8 transition-all flex flex-col items-center gap-4 ${floodStyle.bg} ${floodStyle.pulse ? 'animate-pulse' : ''}`}>
+                <div className="bg-white/20 p-4 rounded-full"><FloodIcon className={`w-12 h-12 ${floodStyle.icon}`} /></div>
+                <div className="text-center">
+                  <p className={`text-[10px] font-black uppercase tracking-widest mb-1 opacity-80 ${floodStyle.text}`}>{floodStyle.label}</p>
+                  <p className={`text-2xl font-black uppercase italic leading-none ${floodStyle.text}`}>{floodStyle.title}</p>
+                  <p className={`text-xs mt-3 font-bold opacity-70 ${floodStyle.text}`}>{risqueCrues}</p>
+                </div>
               </div>
             </div>
           </section>
@@ -1101,20 +1068,6 @@ const App = () => {
             <div className="p-6 bg-orange-50 rounded-[2rem] border-2 border-orange-100 text-center">
               <p className="text-[10px] font-black uppercase text-orange-400 mb-1 tracking-widest">Saint du Jour</p>
               <p className="text-2xl font-black uppercase text-orange-900">{getHardcodedSaint()}</p>
-            </div>
-          </section>
-          <section className="bg-white rounded-[3rem] p-6 shadow-sm border border-slate-200">
-            <h3 className="text-xl font-black mb-4 uppercase text-slate-900">ÉTAT IA</h3>
-            <div className="text-sm text-slate-700 space-y-2">
-              <div><strong>Endpoint:</strong> {aiEndpoint || (localStorage.getItem('allo_meteo_local_text_endpoint') || 'Aucun')}</div>
-              <div><strong>Modèle:</strong> {selectedModel || 'Auto'}</div>
-              <div><strong>Latences:</strong> texte {lastPerf?.textLatencyMs ?? '-'} ms · audio {lastPerf?.audioLatencyMs ?? '-'} ms</div>
-              <div><strong>Tokens:</strong> {lastPerf?.tokens ?? '-'}</div>
-              <div><strong>Rate:</strong> {textCooldownRemaining ? `texte cooldown ${Math.ceil(textCooldownRemaining / 1000)}s` : 'ok'} · {ttsCooldownRemaining ? `tts cooldown ${Math.ceil(ttsCooldownRemaining / 1000)}s` : 'ok'}</div>
-              <div className="flex gap-2 mt-3">
-                <button onClick={() => { localStorage.removeItem('allo_meteo_local_text_endpoint'); detectLocalModels(); }} className="px-3 py-2 bg-blue-600 text-white rounded">Ré-detecter</button>
-                <button onClick={() => { setAvailableModels([]); setSelectedModel(''); localStorage.removeItem('allo_meteo_model'); }} className="px-3 py-2 bg-white border rounded">Reset modèle</button>
-              </div>
             </div>
           </section>
           <div onClick={() => window.open(REPO_URL, '_blank')} className="bg-slate-900 p-10 rounded-[3rem] text-white flex justify-between items-center group cursor-pointer active:scale-95 transition-all shadow-2xl border-b-[8px] border-slate-800">
