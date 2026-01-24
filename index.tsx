@@ -174,29 +174,33 @@ Saint-Christophe-en-Oisans : X°C
 Villard-Reculas : X°C
 
  [ROUTE]
- (État réel du trafic sur la RD1091 - Grenoble/Oisans/Briançon)
+ (État réel du trafic sur la RD1091 - Grenoble/Oisans/Briançon via Waze / Itinisère)
  Statut: (Fluide/Ralenti/Accident/Fermé)
- Détails: (Précisions sur les ralentissements ou accidents en cours)
+ Détails: (Incidents précis, bouchons ou travaux détectés en direct)
  
  [RISQUES]
  Sismique: (Faible/Modéré/Élevé ou "Aucune alerte en cours")
  Crues: (Vert/Jaune/Orange/Rouge ou "Aucune alerte en cours")
  
  [EVENEMENTS]
- - (Cherche les VRAIS événements du jour via l'Office de Tourisme de l'Oisans, Alpe d'Huez et Les 2 Alpes)
- - Événement 1 (Nom + Lieu + Heure si possible)
- - Événement 2 (Nom + Lieu + Heure si possible)
- - Événement 3 (Nom + Lieu + Heure si possible)
+ - (Cherche les VRAIS événements sur oisans.com, alpedhuez.com et les2alpes.com)
+ - Priorité aux événements d'AUJOURD'HUI. Si peu nombreux, ajoute les événements majeurs de la SEMAINE à VENIR.
+ - Indique clairement la DATE pour chaque événement (ex: "Aujourd'hui: Nom", "Lundi 26: Nom").
+ - Événement 1 (Date + Nom + Lieu)
+ - Événement 2 (Date + Nom + Lieu)
+ - Événement 3 (Date + Nom + Lieu)
  
  [LUNE]
  Phase actuelle de la lune
  
- INSTRUCTIONS:
- - Date: ${today}
- - RECHERCHE WEB OBLIGATOIRE: "Conditions circulation RD1091 Oisans ${today}" et "Accidents RD1091 Grenoble Oisans"
- - NE CHERCHE PAS Villard-Bonnot ni Espace Aragon
- - Utilise Google Search pour obtenir les données météo, trafic et événements en temps réel
- - Sois TRÈS CONCIS, données brutes uniquement
+ INSTRUCTIONS CRITIQUES:
+ - Date du jour: ${today}
+ - RECHERCHE WEB OBLIGATOIRE SUR LES SITES RÉELS :
+   1. TRAFIC: google.com/search?q=info+trafic+RD1091+Waze+Itinisere+accidents+Oisans
+   2. AGENDA: oisans.com/agenda, alpedhuez.com/fr/hiver/agenda, les2alpes.com/hiver/agenda
+ - NE CHERCHE PAS Villard-Bonnot ni Espace Aragon.
+ - Pour le TRAFIC : Cherche les accidents, bouchons ou routes coupées RÉELS de moins de 3 heures.
+ - Pour les EVENEMENTS : Liste d'abord ceux de ${today}, puis complète avec les événements phares jusqu'à J+7.
  - RESPECTE EXACTEMENT le format avec les balises [SECTION]`;
 };
 
@@ -941,8 +945,8 @@ const App = () => {
           )}
           <section className="bg-gradient-to-br from-blue-700 to-indigo-900 rounded-[3rem] p-10 pt-6 text-white shadow-2xl relative border-b-[10px] border-blue-500">
             <div className="relative z-10">
-              <div className="flex items-center gap-4 text-blue-100 font-black text-2xl uppercase mb-10">
-                <CalendarDays className="w-8 h-8" />
+              <div className="flex items-center gap-4 text-blue-100 font-black text-xl uppercase mb-10">
+                <CalendarDays className="w-6 h-6" />
                 {new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(currentTime)}
                 <span className="text-white/30 font-light mx-2">|</span>
                 <span className="text-white">{currentTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -1137,7 +1141,17 @@ const App = () => {
           </div>
         </aside>
       </main>
-      <footer className="max-w-7xl mx-auto px-4 mt-20 py-12 border-t border-slate-200 text-center"><p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.5em]">© 2026 ALLO-MÉTÉO OISANS • STATION DE CONTRÔLE</p></footer>
+      <footer className="max-w-7xl mx-auto px-4 mt-20 py-12 border-t border-slate-200 text-center">
+        <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.5em] mb-4">© 2026 ALLO-MÉTÉO OISANS</p>
+        <a
+          href="http://ThePhoenixAgency.github.io"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 font-black uppercase text-[10px] tracking-widest transition-all hover:gap-3"
+        >
+          Lien vers PhoenixProject <ExternalLink className="w-3 h-3" />
+        </a>
+      </footer>
     </div>
   );
 };
