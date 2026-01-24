@@ -174,33 +174,32 @@ Saint-Christophe-en-Oisans : X°C
 Villard-Reculas : X°C
 
  [ROUTE]
- (État réel du trafic sur la RD1091 - Grenoble/Oisans/Briançon via Waze / Itinisère)
- Statut: (Fluide/Ralenti/Accident/Fermé)
- Détails: (Incidents précis, bouchons ou travaux détectés en direct)
+ (Analyse du trafic en temps réel dans un rayon de 20km autour du Bourg d'Oisans - Sources: Waze / Google Maps / Itinisère)
+ Statut Global: (Fluide/Ralenti/Accidents/Fermoirs)
+ Incidents: (Détail de TOUS les accidents, bouchons ou routes coupées sur les principaux axes et directions du secteur Oisans)
  
  [RISQUES]
  Sismique: (Faible/Modéré/Élevé ou "Aucune alerte en cours")
  Crues: (Vert/Jaune/Orange/Rouge ou "Aucune alerte en cours")
  
  [EVENEMENTS]
- - (Cherche sur oisans.com/agenda, alpedhuez.com et les2alpes.com)
- - Priorité aux événements de la SEMAINE à VENIR (${today} au ${new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('fr-FR')}).
+ - (Cherche les VRAIS événements sur oisans.com, alpedhuez.com et les2alpes.com)
+ - Priorité aux événements d'AUJOURD'HUI. Si peu nombreux, ajoute les événements majeurs de la SEMAINE à VENIR.
  - Événement 1 (Date + Nom + Lieu)
  - Événement 2 (Date + Nom + Lieu)
  - Événement 3 (Date + Nom + Lieu)
- - Si RIEN n'est trouvé, écris : "Aucun événement majeur cette semaine"
-
+ 
  [LUNE]
- Phase actuelle de la lune
-
+ Phase actuelle de la lune (NOM de la phase uniquement, pas d'émoticônes)
+ 
  INSTRUCTIONS CRITIQUES:
  - Date du jour: ${today}
- - RECHERCHE WEB OBLIGATOIRE SUR LES SITES RÉELS :
-   1. TRAFIC: google.com/search?q=info+trafic+RD1091+Waze+Itinisere+accidents+Oisans
+ - RECHERCHE WEB OBLIGATOIRE :
+   1. TRAFIC: "état du trafic Oisans 20km radius", "accidents routes Oisans", "Waze Bourg d'Oisans real time"
    2. AGENDA: oisans.com/agenda, alpedhuez.com/fr/hiver/agenda, les2alpes.com/hiver/agenda
  - NE CHERCHE PAS Villard-Bonnot ni Espace Aragon.
- - Pour le TRAFIC : Cherche les accidents, bouchons ou routes coupées RÉELS de moins de 12 heures.
- - Si tu ne trouves pas d'info trafic spécifique, écris "Trafic fluide sur tout l'axe Oisans".
+ - Pour le TRAFIC : Ne nomme pas les numéros de départementales sauf si indispensable. Parle en "Axes" et "Directions". Rapporte les incidents de moins de 3 heures.
+ - Si tu ne trouves rien de spécial, écris "Trafic fluide sur l'ensemble du secteur Oisans".
  - RESPECTE EXACTEMENT les balises [SECTION]`;
 };
 
@@ -632,14 +631,15 @@ const App = () => {
     ? (risquesText.match(/sismique\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Aucune alerte en cours")
     : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte en cours" : "IA indisponible"));
   const risqueCrues = hasRisquesData
-    ? (risquesText.match(/crues\s?[:\-]?\s?([^,.\n\[]+)/i)?.[1] || "Pas de données")
-    : (isLoading ? "Analyse..." : (hasAnyAIData ? "Vigilance Verte" : "IA indisponible"));
+    ? (risquesText.match(/crues\s?[:\-]?\s?([^,.\n\[]+)/i)?.[1] || "Donnée indisponible")
+    : (globalLoading ? "RECHERCHE EN COURS..." : (hasAnyAIData ? "Vigilance Verte" : "IA Indisponible"));
 
   const getAlertStyle = (text: string) => {
     const t = text.toLowerCase();
     if (t.includes('rouge')) return { bg: 'bg-red-500 border-red-400', title: 'DANGER ROUGE', text: 'text-white', icon: 'text-white', pulse: true, label: 'ALERTE MAXIMALE' };
     if (t.includes('orange')) return { bg: 'bg-orange-500 border-orange-400', title: 'VIGILANCE ORANGE', text: 'text-white', icon: 'text-white', pulse: true, label: 'PRUDENCE ACCRUE' };
     if (t.includes('jaune')) return { bg: 'bg-yellow-400 border-yellow-300', title: 'VIGILANCE JAUNE', text: 'text-yellow-950', icon: 'text-yellow-900', pulse: false, label: 'SOYEZ ATTENTIF' };
+    if (t.includes('en cours') || t.includes('analyse')) return { bg: 'bg-blue-50 border-blue-200', title: 'SCRAPING...', text: 'text-blue-600', icon: 'text-blue-400', pulse: true, label: 'WEB SEARCH' };
     return { bg: 'bg-emerald-500 border-emerald-400', title: 'VIGILANCE VERTE', text: 'text-white', icon: 'text-white', pulse: false, label: 'SITUATION CALME' };
   };
 
@@ -647,12 +647,13 @@ const App = () => {
   const seismicStyle = getAlertStyle(risqueSismique);
 
   const routeContent = getSection('ROUTE');
-  const routeStatus = routeContent.match(/statut\s?[:\-]?\s?([^.\n\[]+)/i)?.[1]?.trim() || "Trafic Fluide";
-  const routeDetails = routeContent.match(/détails\s?[:\-]?\s?([^.\n\[]+)/i)?.[1]?.trim() || "Aucun incident signalé";
+  const routeStatus = globalLoading ? "RECHERCHE EN COURS..." : (routeContent.match(/statut global\s?:\s?([^.\n\[]+)/i)?.[1]?.trim() || "Trafic Fluide");
+  const routeDetails = globalLoading ? "Scan Waze / Google Maps / Itinisère..." : (routeContent.match(/incidents\s?:\s?([^.\n\[]+)/i)?.[1]?.trim() || "Aucun incident signalé");
 
   const getRouteStyle = (status: string) => {
     const s = status.toLowerCase();
-    if (s.includes('accident') || s.includes('fermé') || s.includes('coupée')) return { bg: 'bg-red-600', text: 'text-white', icon: 'text-white', label: 'ALERTE CRITIQUE', pulse: true };
+    if (s.includes('recherche en cours') || s.includes('scan')) return { bg: 'bg-blue-600', text: 'text-white', icon: 'text-white', label: 'GROUNDING...', pulse: true };
+    if (s.includes('accidents') || s.includes('fermé') || s.includes('coupée')) return { bg: 'bg-red-600', text: 'text-white', icon: 'text-white', label: 'ALERTE CRITIQUE', pulse: true };
     if (s.includes('ralenti') || s.includes('travaux') || s.includes('hivernal') || s.includes('établi')) return { bg: 'bg-orange-500', text: 'text-white', icon: 'text-white', label: 'TRAFIC PERTURBÉ', pulse: true };
     return { bg: 'bg-emerald-500', text: 'text-white', icon: 'text-white', label: 'TRAFIC FLUIDE', pulse: false };
   };
@@ -1073,7 +1074,7 @@ const App = () => {
             </div>
             <div className="flex items-center gap-5 mb-8">
               <h3 className="text-2xl font-black text-slate-900 uppercase flex items-center gap-4">
-                <Siren className="w-10 h-10 text-orange-500" /> INFOS ROUTE RD1091
+                <Siren className="w-10 h-10 text-orange-500" /> L'INFO TRAFIC OISANS
               </h3>
             </div>
 
@@ -1083,15 +1084,15 @@ const App = () => {
               </div>
               <div className="text-center md:text-left flex-1">
                 <p className={`text-[10px] font-black uppercase tracking-widest mb-1 opacity-80 ${routeStyle.text}`}>{routeStyle.label}</p>
-                <p className={`text-3xl font-black uppercase italic leading-tight ${routeStyle.text}`}>{routeStatus}</p>
-                {routeDetails && <p className={`mt-3 font-bold opacity-90 leading-relaxed ${routeStyle.text}`}>{routeDetails}</p>}
+                <p className={`text-3xl font-black uppercase italic leading-tight ${routeStyle.text}`}>{routeStatus.replace(/statut global\s?:\s?/i, '')}</p>
+                {routeDetails && <p className={`mt-3 font-bold opacity-90 leading-relaxed ${routeStyle.text}`}>{routeDetails.replace(/incidents\s?:\s?/i, '')}</p>}
               </div>
             </div>
 
             <div className="mt-6 p-6 bg-slate-50 rounded-[2rem] border-2 border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="w-3 h-3 bg-emerald-500 rounded-full animate-ping"></div>
-                <p className="text-xs font-black text-slate-500 uppercase tracking-widest text-center md:text-left">Analyse Grenoble ↔ Briançon en direct</p>
+                <p className="text-xs font-black text-slate-500 uppercase tracking-widest text-center md:text-left">Analyse des axes et directions du secteur</p>
               </div>
               <ExternalLink className="w-4 h-4 text-slate-300" />
             </div>
@@ -1099,10 +1100,14 @@ const App = () => {
         </div>
 
         <aside className="lg:col-span-4 space-y-10">
-          <section className="bg-indigo-950 rounded-[3rem] p-8 text-white shadow-2xl relative overflow-hidden text-center">
-            <h3 className="text-xl font-black mb-6 uppercase text-indigo-300 flex items-center justify-center gap-4"><MoonStar className="w-7 h-7" /> LUNE</h3>
-            <div className="bg-indigo-900/40 p-5 rounded-full border-2 border-indigo-800 shadow-xl inline-block mb-4"><Moon className="w-12 h-12 text-indigo-100" /></div>
-            <p className="text-2xl font-black uppercase text-white">{getSection('LUNE') || getMoonPhase()}</p>
+          <section className="bg-indigo-950 rounded-[3rem] p-10 text-white shadow-2xl relative overflow-hidden text-center flex flex-col items-center justify-center min-h-[350px]">
+            <h3 className="text-5xl font-black uppercase text-indigo-300 mb-8 tracking-tighter text-center w-full">LUNE</h3>
+            <div className="bg-indigo-900/40 p-8 rounded-full border-4 border-indigo-800 shadow-2xl inline-block mb-8">
+              <Moon className="w-24 h-24 text-blue-400 fill-blue-400/20" />
+            </div>
+            <p className="text-2xl font-black uppercase text-white tracking-tighter italic leading-none whitespace-pre-line">
+              {(getSection('LUNE') || getMoonPhase()).replace(/[\u{1F300}-\u{1F3FF}\u{1F400}-\u{1F4FF}\u{1F500}-\u{1F5FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F900}-\u{1F9FF}]/gu, '').trim()}
+            </p>
           </section>
           <section className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
             <h3 className="text-xl font-black mb-8 uppercase text-blue-900 flex items-center gap-5"><Mail className="w-7 h-7 text-blue-600" /> BULLETIN DE 07H00</h3>
