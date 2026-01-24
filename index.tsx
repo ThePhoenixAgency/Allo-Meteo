@@ -22,7 +22,19 @@ import { GoogleGenAI, Modality } from "@google/genai";
 
 const LOCATION = "Le Bourg d'Oisans";
 const REPO_URL = "https://github.com/ThePhoenixAgency/Allo-meteo";
-const LOCATION_COORDS = { lat: 45.0053, lon: 6.0748 };
+
+// Coordonnées GPS pour Prevision-Meteo.ch API
+const LOCATION_COORDS = { lat: 45.0520, lon: 6.0301 }; // Le Bourg-d'Oisans
+
+// Stations de ski de l'Oisans (coordonnées GPS pour météo)
+const STATIONS_COORDS = {
+  "Alpe d'Huez": { lat: 45.0926, lon: 6.0683 },
+  "Les 2 Alpes": { lat: 45.0043, lon: 6.1197 },
+  "Vaujany": { lat: 45.1576, lon: 6.0768 },
+  "Oz-en-Oisans": { lat: 45.2167, lon: 6.0667 },
+  "Saint-Christophe-en-Oisans": { lat: 44.9581, lon: 6.1767 },
+  "Villard-Reculas": { lat: 45.0942, lon: 6.0309 }
+};
 const hasGeminiKey = Boolean(process.env.API_KEY);
 const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes pour économiser les tokens Gemini
 const USER_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - considère l'utilisateur inactif après ce délai

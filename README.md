@@ -73,7 +73,19 @@ Application web de bulletins météo en temps réel pour la région de l'Oisans 
 
 ## 🌐 Déploiement Production
 
-Consultez **`docs/DEPLOYMENT.md`** pour le guide complet de déploiement sur Vercel/Netlify avec configuration des secrets GitHub.
+### Déploiement Vercel (Recommandé)
+
+Consultez **`docs/VERCEL_DEPLOY.md`** pour le guide pas-à-pas complet (5 minutes).
+
+**Résumé rapide:**
+1. Se connecter sur [vercel.com](https://vercel.com) avec GitHub
+2. Importer le projet `ThePhoenixAgency/Allo-meteo`
+3. Ajouter la variable d'environnement `GEMINI_API_KEY`
+4. Cliquer sur "Deploy" → **C'est en ligne !**
+
+### Autres Plateformes
+
+Consultez **`docs/DEPLOYMENT.md`** pour Netlify, Docker, etc.
 
 ---
 
@@ -113,6 +125,28 @@ document.cookie.split(";").forEach(c => document.cookie = c.trim().split("=")[0]
 - Utilisation `URL()` constructor pour construction d'URLs
 - Optimisation gestion d'erreurs
 - Nettoyage code (suppression duplications)
+
+---
+
+## 🗺️ Changer de Lieu
+
+Pour adapter l'application à une autre région (ex: Chamonix, Grenoble) :
+
+1. **Modifier les coordonnées** dans `index.tsx` (lignes 23-25) :
+   ```typescript
+   const LOCATION = "Votre Ville";
+   const LOCATION_COORDS = { lat: 45.1234, lon: 5.6789 };
+   ```
+
+2. **Trouver les coordonnées GPS** :
+   - Aller sur [Google Maps](https://www.google.com/maps)
+   - Clic droit sur votre ville → "Copier les coordonnées"
+
+3. **Modifier les stations** dans le prompt (ligne 151-157)
+
+4. **Modifier la route** (ligne 159)
+
+📚 **Guide détaillé:** `docs/VERCEL_DEPLOY.md` section "Changer le Lieu"
 
 ---
 
