@@ -173,29 +173,31 @@ Oz-en-Oisans : X°C
 Saint-Christophe-en-Oisans : X°C
 Villard-Reculas : X°C
 
-[ROUTE]
-État de la RD1091 (Grenoble-Oisans-Briançon): (fluide/ralenti/coupée/conditions hivernales/etc.)
-
-[RISQUES]
-Sismique: (Faible/Modéré/Élevé ou "Aucune alerte en cours")
-Crues: (Vert/Jaune/Orange/Rouge ou "Aucune alerte en cours")
-
-[EVENEMENTS]
-- (Cherche les VRAIS événements du jour via l'Office de Tourisme de l'Oisans, Alpe d'Huez et Les 2 Alpes)
-- Événement 1 (Nom + Lieu + Heure si possible)
-- Événement 2 (Nom + Lieu + Heure si possible)
-- Événement 3 (Nom + Lieu + Heure si possible)
-
-[LUNE]
-Phase actuelle de la lune
-
-INSTRUCTIONS:
-- Date: ${today}
-- RECHERCHE WEB OBLIGATOIRE: "Agenda événements Oisans ${today}"
-- NE CHERCHE PAS Villard-Bonnot ni Espace Aragon
-- Utilise Google Search pour obtenir les données météo et les événements en temps réel
-- Sois TRÈS CONCIS, données brutes uniquement
-- RESPECTE EXACTEMENT le format avec les balises [SECTION]`;
+ [ROUTE]
+ (État réel du trafic sur la RD1091 - Grenoble/Oisans/Briançon)
+ Statut: (Fluide/Ralenti/Accident/Fermé)
+ Détails: (Précisions sur les ralentissements ou accidents en cours)
+ 
+ [RISQUES]
+ Sismique: (Faible/Modéré/Élevé ou "Aucune alerte en cours")
+ Crues: (Vert/Jaune/Orange/Rouge ou "Aucune alerte en cours")
+ 
+ [EVENEMENTS]
+ - (Cherche les VRAIS événements du jour via l'Office de Tourisme de l'Oisans, Alpe d'Huez et Les 2 Alpes)
+ - Événement 1 (Nom + Lieu + Heure si possible)
+ - Événement 2 (Nom + Lieu + Heure si possible)
+ - Événement 3 (Nom + Lieu + Heure si possible)
+ 
+ [LUNE]
+ Phase actuelle de la lune
+ 
+ INSTRUCTIONS:
+ - Date: ${today}
+ - RECHERCHE WEB OBLIGATOIRE: "Conditions circulation RD1091 Oisans ${today}" et "Accidents RD1091 Grenoble Oisans"
+ - NE CHERCHE PAS Villard-Bonnot ni Espace Aragon
+ - Utilise Google Search pour obtenir les données météo, trafic et événements en temps réel
+ - Sois TRÈS CONCIS, données brutes uniquement
+ - RESPECTE EXACTEMENT le format avec les balises [SECTION]`;
 };
 
 const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: string; sources: any[] }> => {
@@ -659,7 +661,21 @@ const App = () => {
 
   const floodStyle = getAlertStyle(risqueCrues);
   const seismicStyle = getAlertStyle(risqueSismique);
-  const hasCriticalAlert = risqueCrues.toLowerCase().includes('orange') || risqueCrues.toLowerCase().includes('rouge') || risqueSismique.toLowerCase().includes('orange') || risqueSismique.toLowerCase().includes('rouge');
+
+  const routeContent = getSection('ROUTE');
+  const routeStatus = routeContent.match(/statut\s?:\s?([^.\n]+)/i)?.[1]?.trim() || "Information Indisponible";
+  const routeDetails = routeContent.match(/détails\s?:\s?([^.\n]+)/i)?.[1]?.trim() || "";
+
+  const getRouteStyle = (status: string) => {
+    const s = status.toLowerCase();
+    if (s.includes('accident') || s.includes('fermé') || s.includes('coupée')) return { bg: 'bg-red-600', text: 'text-white', icon: 'text-white', label: 'ALERTE CRITIQUE', pulse: true };
+    if (s.includes('ralenti') || s.includes('travaux') || s.includes('hivernal')) return { bg: 'bg-orange-500', text: 'text-white', icon: 'text-white', label: 'TRAFIC PERTURBÉ', pulse: true };
+    if (s.includes('fluide')) return { bg: 'bg-emerald-500', text: 'text-white', icon: 'text-white', label: 'TRAFIC FLUIDE', pulse: false };
+    return { bg: 'bg-slate-100', text: 'text-slate-500', icon: 'text-slate-400', label: 'EN ANALYSE', pulse: false };
+  };
+
+  const routeStyle = getRouteStyle(routeStatus);
+  const hasCriticalAlert = routeStyle.label === 'ALERTE CRITIQUE' || floodStyle.title.includes('DANGER') || seismicStyle.title.includes('DANGER');
 
   const manualTemperature = manualWeather?.temperature !== undefined ? manualWeather.temperature.toFixed(1) : null;
   const manualHumidityValue = manualWeather?.humidity ?? null;
@@ -904,9 +920,9 @@ const App = () => {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <button onClick={playWeatherBulletin} className={`flex items-center gap-4 px-8 py-4 rounded-[2rem] font-black transition-all shadow-2xl active:scale-95 ${isPlaying ? 'bg-red-500 text-white animate-pulse' : 'bg-blue-600 text-white'}`}>
-              {loading ? <Loader2 className="w-6 h-6 animate-spin" /> : (isPlaying ? <Square className="w-6 h-6 fill-current" /> : <Volume2 className="w-6 h-6" />)}
-              <span className="text-lg uppercase">{isPlaying ? "STOP" : "BULLETIN"}</span>
+            <button onClick={playWeatherBulletin} className={`flex items-center gap-3 px-6 py-2.5 rounded-xl font-black transition-all shadow-lg active:scale-95 ${isPlaying ? 'bg-red-500 text-white animate-pulse' : 'bg-blue-600 text-white'}`}>
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (isPlaying ? <Square className="w-5 h-5 fill-current" /> : <Volume2 className="w-5 h-5" />)}
+              <span className="text-base uppercase tracking-tight">{isPlaying ? "STOP" : "BULLETIN"}</span>
             </button>
           </div>
         </div>
@@ -1063,9 +1079,34 @@ const App = () => {
               )}
             </div>
           </section>
-          <section className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
-            <div className="flex items-center gap-5 mb-8"><div className="bg-orange-500 p-4 rounded-[1.5rem] shadow-lg"><Siren className="w-10 h-10 text-white animate-pulse" /></div><h3 className="text-2xl font-black text-slate-900 uppercase">INFOS ROUTE RD1091</h3></div>
-            <div className="p-10 rounded-[2.5rem] bg-slate-50 border-2 border-slate-100"><p className="text-xl font-bold text-slate-700 leading-relaxed italic">{getSection('ROUTE') || "Actualisation..."}</p></div>
+          <section className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200 overflow-hidden relative">
+            <div className="absolute top-0 right-0 bg-orange-50 px-6 py-2 rounded-bl-[2rem] text-[10px] font-black text-orange-500 uppercase tracking-widest flex items-center gap-2">
+              <Sparkles className="w-3 h-3" /> Trafic Temps Réel
+            </div>
+            <div className="flex items-center gap-5 mb-8">
+              <h3 className="text-2xl font-black text-slate-900 uppercase flex items-center gap-4">
+                <Siren className="w-10 h-10 text-orange-500" /> INFOS ROUTE RD1091
+              </h3>
+            </div>
+
+            <div className={`p-8 rounded-[2.5rem] border-b-8 transition-all flex flex-col md:flex-row items-center gap-8 ${routeStyle.bg} ${routeStyle.pulse ? 'animate-pulse' : ''}`}>
+              <div className="bg-white/20 p-5 rounded-full shadow-lg">
+                <Siren className={`w-12 h-12 ${routeStyle.icon}`} />
+              </div>
+              <div className="text-center md:text-left flex-1">
+                <p className={`text-[10px] font-black uppercase tracking-widest mb-1 opacity-80 ${routeStyle.text}`}>{routeStyle.label}</p>
+                <p className={`text-3xl font-black uppercase italic leading-tight ${routeStyle.text}`}>{routeStatus}</p>
+                {routeDetails && <p className={`mt-3 font-bold opacity-90 leading-relaxed ${routeStyle.text}`}>{routeDetails}</p>}
+              </div>
+            </div>
+
+            <div className="mt-6 p-6 bg-slate-50 rounded-[2rem] border-2 border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-3 h-3 bg-emerald-500 rounded-full animate-ping"></div>
+                <p className="text-xs font-black text-slate-500 uppercase tracking-widest text-center md:text-left">Analyse Grenoble ↔ Briançon en direct</p>
+              </div>
+              <ExternalLink className="w-4 h-4 text-slate-300" />
+            </div>
           </section>
         </div>
 
