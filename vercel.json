@@ -12,5 +12,11 @@
     "silent": true,
     "autoAlias": false,
     "autoJobCancelation": true
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/ping",
+      "schedule": "0 * * * *"
+    }
+  ]
 }
