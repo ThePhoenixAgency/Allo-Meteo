@@ -28,21 +28,14 @@ const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes pour économiser 
 const USER_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - considère l'utilisateur inactif après ce délai
 const COOKIE_EXPIRY_DAYS = 395; // 13 mois (conformité RGPD max)
 
-// IA locale optionnelle (fallback si Gemini indisponible) - détection automatique
+// IA locale optionnelle (UNIQUEMENT pour TTS audio en fallback)
+// L'IA locale N'A PAS accès à internet donc ne peut PAS remplacer Gemini pour la météo
 const LOCAL_AI_BASE_URLS = [
   'http://localhost:1234',      // LM Studio par défaut
   'http://localhost:8080',      // Ollama
   'http://localhost:11434',     // Ollama alternatif
   'http://127.0.0.1:1234',
   'http://127.0.0.1:8080',
-];
-
-const LOCAL_TEXT_ENDPOINTS = [
-  '/v1/chat/completions',       // LM Studio / OpenAI compatible
-  '/v1/completions',
-  '/api/generate',              // Ollama
-  '/v1/responses',
-  '/generate',
 ];
 
 const LOCAL_TTS_ENDPOINTS = [
@@ -152,97 +145,88 @@ async function decodeAudioData(
 
 const buildExpertPrompt = () => {
   const today = new Date().toLocaleDateString('fr-FR');
-  return `INFOS OISANS EN DIRECT - ${today} :
-      NE CHERCHE PAS VILLARD-BONNOT NI ESPACE ARAGON.
-      1. METEO: Température actuelle au Bourg d'Oisans (°C), ressenti, humidité (%), pression (hPa), pluie (mm), neige (cm).
-      DÉTERMINE SI INVERSION THERMIQUE active.
-      2. ROUTE: RD1091 (Grenoble-Oisans-Briançon).
-      3. STATIONS: Températures actuelles (°C) EXCLUSIVEMENT pour :
-      Alpe d'Huez, Les 2 Alpes, Vaujany, Oz-en-Oisans, Saint-Christophe-en-Oisans, Villard-Reculas.
-      FORMAT STRICT STATIONS: Une station par ligne, "Nom station : Valeur°C".
-      4. RISQUES: Analyse PRÉDICTIVE basée sur météo actuelle. Niveau sismique (Faible/Modéré/Élevé), Crues (Vert/Jaune/Orange/Rouge).
-      Si AUCUN RISQUE ACTIF: Écris "Aucune alerte en cours".
-      5. EVENEMENTS: 3 évènements (1 par ligne).
-      6. LUNE: Phase.
-      BALISES: [METEO], [ROUTE], [STATIONS], [RISQUES], [EVENEMENTS], [LUNE], [INVERSION]. RÉPONSE TRÈS COURTE ET RAPIDE SANS BLA-BLA.`;
+  return `Tu es un assistant météo pour l'Oisans. RÉPONDS UNIQUEMENT avec le format EXACT ci-dessous. N'ajoute AUCUN texte d'introduction ni de conclusion.
+
+FORMAT OBLIGATOIRE (respecte les balises EXACTEMENT):
+
+[METEO]
+Température: X°C
+Ciel: (ensoleillé/nuageux/pluvieux/neigeux)
+Humidité: X%
+Pression: XhPa
+Pluie: Xmm
+Neige: Xcm
+
+[INVERSION]
+(OUI ou NON)
+
+[STATIONS]
+Alpe d'Huez : X°C
+Les 2 Alpes : X°C
+Vaujany : X°C
+Oz-en-Oisans : X°C
+Saint-Christophe-en-Oisans : X°C
+Villard-Reculas : X°C
+
+[ROUTE]
+État de la RD1091 (Grenoble-Oisans-Briançon): (fluide/ralenti/coupée/conditions hivernales/etc.)
+
+[RISQUES]
+Sismique: (Faible/Modéré/Élevé ou "Aucune alerte en cours")
+Crues: (Vert/Jaune/Orange/Rouge ou "Aucune alerte en cours")
+
+[EVENEMENTS]
+- Événement 1
+- Événement 2
+- Événement 3
+
+[LUNE]
+Phase actuelle de la lune
+
+INSTRUCTIONS:
+- Date: ${today}
+- NE CHERCHE PAS Villard-Bonnot ni Espace Aragon
+- Utilise Google Search pour obtenir les données météo en temps réel
+- Sois TRÈS CONCIS, données brutes uniquement
+- RESPECTE EXACTEMENT le format avec les balises [SECTION]`;
 };
 
-// Essayer un endpoint local pour la génération de texte
-async function tryLocalTextEndpoint(base: string, path: string, prompt: string) {
-  const url = `${base}${path}`;
-  const payloads = [
-    { model: 'default', messages: [{ role: 'user', content: prompt }] },
-    { prompt },
-    { input: prompt },
-  ];
-
-  for (const body of payloads) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10000) // 10s timeout
-      });
-
-      if (!res.ok) continue;
-      const json = await res.json();
-
-      // Extraire le texte de différents formats de réponse
-      let text = null;
-      if (json.choices?.[0]?.message?.content) text = json.choices[0].message.content;
-      else if (json.choices?.[0]?.text) text = json.choices[0].text;
-      else if (json.response) text = json.response;
-      else if (json.text) text = json.text;
-
-      if (text) {
-        console.info(`✅ IA locale détectée: ${base}${path}`);
-        return { text, sources: [] };
-      }
-    } catch (e) {
-      continue;
-    }
-  }
-  return null;
-}
-
 const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: string; sources: any[] }> => {
-  // Priorité 1: Gemini (production)
-  if (hasGeminiKey) {
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          thinkingConfig: { thinkingBudget: 0 }
-        },
-      });
-
-      return {
-        text: response.text || '',
-        sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [],
-      };
-    } catch (error) {
-      console.warn('❌ Gemini API erreur:', error);
-      // Continue vers fallback local
-    }
+  // Gemini OBLIGATOIRE pour la recherche web (météo, stations, etc.)
+  if (!hasGeminiKey) {
+    throw new Error('❌ Clé API Gemini requise. Configurez GEMINI_API_KEY dans .env');
   }
 
-  // Priorité 2: IA locale (fallback si branchée)
-  console.info('🔍 Recherche d\'une IA locale en fallback...');
-  for (const base of LOCAL_AI_BASE_URLS) {
-    for (const path of LOCAL_TEXT_ENDPOINTS) {
-      const result = await tryLocalTextEndpoint(base, path, prompt);
-      if (result) {
-        localStorage.setItem('allo_meteo_local_text_endpoint', `${base}${path}`);
-        return result;
-      }
-    }
-  }
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+        thinkingConfig: { thinkingBudget: 0 }
+      },
+    });
 
-  throw new Error('❌ Aucune IA disponible (Gemini offline + pas d\'IA locale détectée)');
+    const text = response.text || '';
+
+    // Vérifier que la réponse contient bien les balises requises
+    const requiredSections = ['[METEO]', '[STATIONS]', '[ROUTE]', '[RISQUES]', '[LUNE]'];
+    const missingSections = requiredSections.filter(section => !text.includes(section));
+
+    if (missingSections.length > 0) {
+      console.warn('⚠️ Sections manquantes dans la réponse Gemini:', missingSections);
+      // On continue quand même, l'UI gèrera les sections manquantes
+    }
+
+    return {
+      text,
+      sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [],
+    };
+  } catch (error: any) {
+    console.error('❌ Erreur Gemini API:', error);
+    throw new Error(`Gemini API erreur: ${error.message || 'Erreur inconnue'}`);
+  }
 };
 
 // Essayer un endpoint local pour TTS
