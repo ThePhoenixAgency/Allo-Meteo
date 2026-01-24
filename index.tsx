@@ -35,7 +35,7 @@ const STATIONS_COORDS = {
   "Saint-Christophe-en-Oisans": { lat: 44.9581, lon: 6.1767 },
   "Villard-Reculas": { lat: 45.0942, lon: 6.0309 }
 };
-const hasGeminiKey = Boolean(process.env.API_KEY);
+const hasGeminiKey = Boolean(process.env.API_KEY || process.env.GEMINI_API_KEY);
 const AUTO_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 heures (2 fois par jour)
 const USER_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - considère l'utilisateur inactif après ce délai
 const COOKIE_EXPIRY_DAYS = 395; // 13 mois (conformité RGPD max)
