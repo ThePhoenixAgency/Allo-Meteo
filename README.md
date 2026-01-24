@@ -73,19 +73,15 @@ Application web de bulletins météo en temps réel pour la région de l'Oisans 
 
 ## 🌐 Déploiement Production
 
-### Déploiement Vercel (Recommandé)
+📚 **Guide complet:** [docs/vercel-deploy.md](docs/vercel-deploy.md)
 
-Consultez **`docs/VERCEL_DEPLOY.md`** pour le guide pas-à-pas complet (5 minutes).
-
-**Résumé rapide:**
+**Résumé:**
 1. Se connecter sur [vercel.com](https://vercel.com) avec GitHub
 2. Importer le projet `ThePhoenixAgency/Allo-meteo`
-3. Ajouter la variable d'environnement `GEMINI_API_KEY`
-4. Cliquer sur "Deploy" → **C'est en ligne !**
+3. Ajouter `GEMINI_API_KEY` dans Environment Variables
+4. Déployer → C'est en ligne !
 
-### Autres Plateformes
-
-Consultez **`docs/DEPLOYMENT.md`** pour Netlify, Docker, etc.
+Vercel redéploie automatiquement à chaque push sur `main`.
 
 ---
 
@@ -150,42 +146,25 @@ document.cookie.split(";").forEach(c => document.cookie = c.trim().split("=")[0]
 
 ## 🗺️ Changer de Lieu
 
-Pour adapter l'application à une autre région (ex: Chamonix, Grenoble) :
+📚 **Guide détaillé:** [docs/vercel-deploy.md](docs/vercel-deploy.md#changer-le-lieu-oisans--autre-région)
 
-1. **Modifier les coordonnées** dans `index.tsx` (lignes 23-25) :
-   ```typescript
-   const LOCATION = "Votre Ville";
-   const LOCATION_COORDS = { lat: 45.1234, lon: 5.6789 };
-   ```
+**Résumé:** Modifier `index.tsx` (lignes 23-25, 151-157, 159) → Commit + push → Vercel redéploie automatiquement
 
-2. **Trouver les coordonnées GPS** :
-   - Aller sur [Google Maps](https://www.google.com/maps)
-   - Clic droit sur votre ville → "Copier les coordonnées"
-
-3. **Modifier les stations** dans le prompt (ligne 151-157)
-
-4. **Modifier la route** (ligne 159)
-
-📚 **Guide détaillé:** `docs/VERCEL_DEPLOY.md` section "Changer le Lieu"
-
----
+**Coordonnées GPS:** [Google Maps](https://www.google.com/maps) → Clic droit → "Copier les coordonnées"
 
 ---
 
 ## 🧪 Tests
 
+📚 **Guide complet:** [docs/prompt-test.md](docs/prompt-test.md)
+
 ```bash
-npm test                # Lancer les tests unitaires
+npm test                # 19 tests automatiques
 npm run test:watch      # Mode watch
-npm run test:coverage   # Rapport de couverture
+npm run test:coverage   # Couverture
 ```
 
-**19 tests automatiques** couvrant :
-- Validation GPS (coordonnées + distances)
-- Gestion erreurs API (404, 500, timeout)
-- Optimisation tokens Gemini (cache, rate limiting)
-- Format réponses Gemini (sections requises)
-- Disponibilité 24/7
+**Tests:** GPS, API météo (404/500/timeout), tokens Gemini, format réponses, disponibilité 24/7
 
 ## 📦 Build & Deploy
 
