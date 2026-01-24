@@ -1049,8 +1049,8 @@ const App = () => {
             </div>
             <h3 className="text-2xl font-black mb-8 flex items-center gap-5 uppercase text-indigo-900"><Ticket className="w-10 h-10 text-indigo-600" />ÉVÉNEMENTS OISANS</h3>
             <div className="space-y-6">
-              {getSection('EVENEMENTS').split('\n').filter(e => e.trim() && e.includes('-')).length > 0 ? (
-                getSection('EVENEMENTS').split('\n').filter(e => e.trim() && e.includes('-')).map((event, idx) => (
+              {getSection('EVENEMENTS').split('\n').filter(e => e.trim() && (e.includes('-') || e.includes('•'))).length > 0 ? (
+                getSection('EVENEMENTS').split('\n').filter(e => e.trim() && (e.includes('-') || e.includes('•'))).map((event, idx) => (
                   <div key={idx} className="group p-8 bg-slate-50 hover:bg-indigo-50/50 rounded-[2.5rem] border-2 border-slate-100 hover:border-indigo-100 transition-all cursor-default">
                     <div className="flex items-start gap-6">
                       <div className="bg-white p-4 rounded-2xl shadow-sm group-hover:scale-110 transition-transform"><Ticket className="w-6 h-6 text-indigo-500" /></div>
