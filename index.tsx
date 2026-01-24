@@ -13,7 +13,6 @@ import {
   Ticket, Github, User, ArrowUpRight, ArrowDownRight,
   Waves as FloodIcon, Zap as SeismicIcon, Cookie, Shield
 } from 'lucide-react';
-import { GoogleGenAI, Modality } from "@google/genai";
 
 /**
  * @file Allo-Météo & Route Expert - Version 3.4.0
@@ -22,10 +21,7 @@ import { GoogleGenAI, Modality } from "@google/genai";
 
 const LOCATION = "Le Bourg d'Oisans";
 const REPO_URL = "https://github.com/ThePhoenixAgency/Allo-meteo";
-const LOCAL_AI_BASE_URLS = ['http://192.168.1.57:6667'];
-const LOCAL_AI_BASE_URL = LOCAL_AI_BASE_URLS[0]; // legacy compatibility (now pointed at LM Studio)
 const LOCATION_COORDS = { lat: 45.0053, lon: 6.0748 };
-const hasGeminiKey = Boolean(process.env.API_KEY);
 const TEXT_COOLDOWN_MS = 5000;
 const TTS_COOLDOWN_MS = 5000;
 const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes pour économiser les tokens Gemini
@@ -148,17 +144,6 @@ const buildExpertPrompt = () => {
       BALISES: [METEO], [ROUTE], [STATIONS], [RISQUES], [EVENEMENTS], [LUNE], [INVERSION]. RÉPONSE TRÈS COURTE ET RAPIDE SANS BLA-BLA.`;
 };
 
-type LocalTextResponse = {
-  text?: string;
-  sources?: any[];
-};
-
-const LOCAL_TEXT_ENDPOINTS = [
-  '/v1/responses', '/v1/chat/completions', '/v1/completions',
-  '/generate', '/api/generate', '/api/inference', '/api/v1/generate',
-  '/v1/generate', '/api/completions', '/completions', '/inference'
-];
-
 async function tryLocalEndpoint(base: string, path: string, prompt: string) {
   const url = `${base}${path}`;
   // include selected model if present
@@ -182,6 +167,9 @@ async function tryLocalEndpoint(base: string, path: string, prompt: string) {
       try { json = JSON.parse(text); } catch (e) { json = null; }
       if (res.ok && json) {
         try { console.info(`Probe ${base}${path} OK ${res.status} - body preview:`, JSON.stringify(json).slice(0, 500)); } catch (e) { }
+        if (path === '/v1/chat/completions') {
+          console.log('LM Studio response for /v1/chat/completions:', json);
+        }
 
         const extractText = (obj: any): string | null => {
           if (!obj) return null;
@@ -216,6 +204,8 @@ async function tryLocalEndpoint(base: string, path: string, prompt: string) {
           try { console.info(`Using extracted text from ${base}${path}:`, extracted.slice(0, 200)); } catch (e) { }
           const tokens = json?.usage?.total_tokens || json?.usage?.total || json?.token_count || Math.max(1, Math.round((extracted.split(/\s+/).length) / 0.75));
           return { text: extracted, sources: json.sources || json.metadata || [], tokens };
+        } else {
+          console.warn(`Failed to extract text from ${base}${path} response:`, json);
         }
 
       }
@@ -229,142 +219,18 @@ async function tryLocalEndpoint(base: string, path: string, prompt: string) {
       continue;
     }
   }
-  return null;
-}
-
 const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: string; sources: any[], perf?: { latencyMs: number, model?: string, tokens?: number } }> => {
-  if (hasGeminiKey) {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        thinkingConfig: { thinkingBudget: 0 }
-      },
-    });
-    return {
-      text: response.text || '',
-      sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [],
-    };
-  }
-
-  const t0 = performance.now();
-  // try cached endpoint
-  const cached = (localStorage.getItem('allo_meteo_local_text_endpoint') || '').trim();
-  if (cached) {
-    try { console.info('Trying cached text endpoint:', cached); } catch (e) { }
-    for (const base of LOCAL_AI_BASE_URLS) {
-      const result = await tryLocalEndpoint(base, cached, prompt);
-      if (result) {
-        const latency = Math.round(performance.now() - t0);
-        console.info('Text fetched from cached endpoint');
-        localStorage.setItem('allo_meteo_local_text_endpoint', `${base}${cached}`);
-        return { ...result, perf: { latencyMs: latency, model: localStorage.getItem('allo_meteo_model') || undefined, tokens: result.tokens || undefined } };
-      }
-    }
-    localStorage.removeItem('allo_meteo_local_text_endpoint');
-  }
-
-  // probe endpoints across bases
-  for (const base of LOCAL_AI_BASE_URLS) {
-    for (const p of LOCAL_TEXT_ENDPOINTS) {
-      const result = await tryLocalEndpoint(base, p, prompt);
-      if (result) {
-        const latency = Math.round(performance.now() - t0);
-        localStorage.setItem('allo_meteo_local_text_endpoint', `${base}${p}`);
-        console.info(`Detected working local text endpoint: ${base}${p}`);
-        return { ...result, perf: { latencyMs: latency, model: localStorage.getItem('allo_meteo_model') || undefined, tokens: result.tokens || undefined } };
-      }
-    }
-  }
-
-  throw new Error('Aucun endpoint local compatible trouvé');
+  // No AI available, return default text
+  return {
+    text: 'Bulletin météo expert non disponible. Consultez les données météorologiques ci-dessous.',
+    sources: [],
+  };
 };
-
-type LocalTtsResponse = {
-  audio?: string;
-};
-
-const LOCAL_TTS_ENDPOINTS = ['/tts', '/api/tts', '/api/speech', '/v1/tts', '/api/v1/tts'];
-
-async function tryLocalTtsEndpoint(base: string, path: string, prompt: string) {
-  const url = `${base}${path}`;
-  const payloads = [{ prompt }, { text: prompt }, { input: prompt }, { messages: [{ role: 'user', content: prompt }] }];
-  for (const body of payloads) {
-    try {
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const json = await res.json().catch(() => null);
-      if (res.ok && json) {
-        try { console.info(`Probe tts ${base}${path} OK ${res.status} - body preview:`, JSON.stringify(json).slice(0, 500)); } catch (e) { }
-        if (json.audio || json.base64 || json.data) {
-          try { console.info(`Using audio field from ${base}${path}, length: ${((json.audio || json.base64 || json.data) || '').length}`); } catch (e) { }
-          return (json.audio || json.base64 || json.data) as string;
-        }
-      }
-      if (json && json.error) {
-        console.debug(`local tts ${base}${path} replied error`, json.error);
-        continue;
-      }
-      try { console.debug(`Probe tts ${base}${path} returned ${res.status} but no audio field. body preview:`, (json ? JSON.stringify(json).slice(0, 500) : 'non-json response')); } catch (e) { }
-    } catch (e) {
-      console.debug(`failed tts ${url}:`, e.message || e);
-      continue;
-    }
-  }
-  return null;
-}
 
 
 const fetchBulletinAudioWithFallback = async (prompt: string) => {
   if (!prompt) return { audio: null, perf: undefined };
-  const t0 = performance.now();
-  if (hasGeminiKey) {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-preview-tts',
-      contents: [{ parts: [{ text: prompt }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
-      },
-    });
-    const audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
-    const perf = { latencyMs: Math.round(performance.now() - t0), model: 'gemini' };
-    return { audio, perf };
-  }
-
-  // try cached tts endpoint
-  const cachedTts = (localStorage.getItem('allo_meteo_local_tts_endpoint') || '').trim();
-  if (cachedTts) {
-    try { console.info('Trying cached TTS endpoint:', cachedTts); } catch (e) { }
-    for (const base of LOCAL_AI_BASE_URLS) {
-      try {
-        const path = cachedTts.startsWith('http') ? cachedTts.replace(base, '') : cachedTts;
-        const audio = await tryLocalTtsEndpoint(base + '', path, prompt);
-        if (audio) {
-          const perf = { latencyMs: Math.round(performance.now() - t0), model: localStorage.getItem('allo_meteo_model') || undefined };
-          console.info('Audio fetched from cached TTS endpoint');
-          localStorage.setItem('allo_meteo_local_tts_endpoint', `${base}${path}`);
-          return { audio, perf };
-        }
-      } catch (e) { }
-    }
-    localStorage.removeItem('allo_meteo_local_tts_endpoint');
-  }
-
-  for (const base of LOCAL_AI_BASE_URLS) {
-    for (const p of LOCAL_TTS_ENDPOINTS) {
-      const audio = await tryLocalTtsEndpoint(base, p, prompt);
-      if (audio) {
-        const perf = { latencyMs: Math.round(performance.now() - t0), model: localStorage.getItem('allo_meteo_model') || undefined };
-        localStorage.setItem('allo_meteo_local_tts_endpoint', `${base}${p}`);
-        console.info(`Detected working local tts endpoint: ${base}${p}`);
-        return { audio, perf };
-      }
-    }
-  }
-
+  // No AI available for TTS
   return { audio: null, perf: undefined };
 };
 
@@ -388,7 +254,7 @@ const App = () => {
 
   // MCP configuration (external micro-MCP server)
   const [mcpUrl, setMcpUrl] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_url') || '') : ''));
-  const [mcpHost, setMcpHost] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_host') || LOCAL_AI_BASE_URLS[0]) : LOCAL_AI_BASE_URLS[0]));
+  const [mcpHost, setMcpHost] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_host') || 'http://localhost:1234') : 'http://localhost:1234'));
   const [mcpSecret, setMcpSecret] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_secret') || '') : ''));
   const [mcpStatus, setMcpStatus] = useState<any>(null);
 
@@ -459,7 +325,7 @@ const App = () => {
   const fetchManualWeather = async () => {
     try {
       setManualLoading(true);
-      const url = `https://www.prevision-meteo.ch/services/json/lat=${LOCATION_COORDS.lat}lng=${LOCATION_COORDS.lon}`;
+      const url = `https://www.prevision-meteo.ch/services/json/lat=${LOCATION_COORDS.lat}&lon=${LOCATION_COORDS.lon}`;
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Prevision-Meteo répond ${response.status}`);
@@ -492,24 +358,6 @@ const App = () => {
     } finally {
       setManualLoading(false);
     }
-  };
-
-  const detectLocalModels = async () => {
-    for (const base of LOCAL_AI_BASE_URLS) {
-      try {
-        const res = await fetch(`${base}/v1/models`);
-        if (!res.ok) continue;
-        const json = await res.json().catch(() => null);
-        if (!json) continue;
-        let models: string[] = [];
-        if (Array.isArray(json.data)) models = json.data.map((m: any) => m.id).filter(Boolean);
-        else if (Array.isArray(json.models)) models = json.models.map((m: any) => m.id).filter(Boolean);
-        else if (Array.isArray(json)) models = json.map((m: any) => (m.id || m)).filter(Boolean);
-        if (models.length) { setAvailableModels(models); setAiEndpoint(base); console.info('Detected models at', base, models.slice(0, 10)); return; }
-      } catch (e) { console.debug('detectLocalModels failed for', base, e); }
-    }
-    setAvailableModels([]);
-    setAiEndpoint(null);
   };
 
   // Marque l'activité utilisateur pour déclencher les requêtes API
@@ -645,16 +493,13 @@ const App = () => {
 
     // Toujours fetch la météo basique (pas coûteux)
     fetchManualWeather();
-    detectLocalModels();
 
-    // Fetch IA seulement si utilisateur actif ET cache expiré
-    if (isUserActive() && cacheExpired) {
-      console.info('🚀 Chargement IA pour utilisateur actif');
+    // Fetch IA toujours au chargement pour dev
+    if (cacheExpired) {
+      console.info('🚀 Chargement IA au démarrage');
       fetchExpertData();
-    } else if (!isUserActive()) {
-      console.info('💤 Pas d\'utilisateur actif - requêtes IA désactivées');
     } else {
-      console.info('📦 Utilisation cache IA - expire dans', Math.round((AUTO_REFRESH_INTERVAL_MS - (Date.now() - parseInt(lastFetch))) / 60000), 'min');
+      console.info('📦 Utilisation cache IA');
     }
 
     // Auto-refresh toutes les AUTO_REFRESH_INTERVAL_MS (mais seulement si utilisateur actif)
@@ -1148,7 +993,6 @@ const App = () => {
               <div><strong>Tokens:</strong> {lastPerf?.tokens ?? '-'}</div>
               <div><strong>Rate:</strong> {textCooldownRemaining ? `texte cooldown ${Math.ceil(textCooldownRemaining / 1000)}s` : 'ok'} · {ttsCooldownRemaining ? `tts cooldown ${Math.ceil(ttsCooldownRemaining / 1000)}s` : 'ok'}</div>
               <div className="flex gap-2 mt-3">
-                <button onClick={() => { localStorage.removeItem('allo_meteo_local_text_endpoint'); detectLocalModels(); }} className="px-3 py-2 bg-blue-600 text-white rounded">Ré-detecter</button>
                 <button onClick={() => { setAvailableModels([]); setSelectedModel(''); localStorage.removeItem('allo_meteo_model'); }} className="px-3 py-2 bg-white border rounded">Reset modèle</button>
               </div>
             </div>
@@ -1159,10 +1003,9 @@ const App = () => {
           </div>
         </aside>
       </main>
-      <footer className="max-w-7xl mx-auto px-4 mt-20 py-12 border-t border-slate-200 text-center"><p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.5em]">© 2026 ALLO-MÉTÉO OISANS • STATION DE CONTRÔLE</p></footer>
     </div>
   );
 };
 
 const root = createRoot(document.getElementById('root')!);
-root.render(<App />);
+root.render(React.createElement(App));

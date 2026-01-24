@@ -14,23 +14,50 @@
 
 import http from 'node:http';
 
-const PORT = 6667;
+const PORT = 3002;
 
-const MOCK_TEXT = `[METEO] Température 1°C, ressenti -2°C, humidité 78%, pression 1013 hPa, pluie 0,3 mm, neige 0 cm. Inversion thermique non détectée.
+async function generateMockText() {
+  try {
+    const url = `https://www.prevision-meteo.ch/services/json/lat=45.0053&lon=6.0748`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Failed to fetch weather');
+    const data = await response.json();
+    const current = data.current_condition;
+    if (!current) throw new Error('No current condition');
+
+    const temp = Math.round(parseFloat(current.tmp));
+    const ressenti = temp - 3; // mock
+    const humidity = Math.round(parseFloat(current.humidity));
+    const pressure = Math.round(parseFloat(current.pressure));
+    const pluie = '0,3 mm'; // mock
+    const neige = '0 cm'; // mock
+    const inversion = temp <= 2 ? 'Inversion thermique détectée.' : 'Inversion thermique non détectée.';
+
+    return `[METEO] Température ${temp}°C, ressenti ${ressenti}°C, humidité ${humidity}%, pression ${pressure} hPa, pluie ${pluie}, neige ${neige}. ${inversion}
+[ROUTE] RD1091 dégagée avec quelques plaques de gel. Trafic fluide.
+[STATIONS] Alpe d'Huez : ${temp - 1}°C\nLes 2 Alpes : ${temp - 3}°C\nVaujany : ${temp - 2}°C\nOz-en-Oisans : ${temp - 2}°C\nSaint-Christophe-en-Oisans : ${temp - 4}°C\nVillard-Reculas : ${temp - 5}°C
+[RISQUES] sismique : très faible. crues : vert.
+[EVENEMENTS] Marché des producteurs à Bourg-d'Oisans\nCourse de ski de fond à Vaujany\nConcert "Cimes & Son" à la Maison des Sports
+[LUNE] Pleine Lune`;
+  } catch (error) {
+    console.error('Failed to generate mock text:', error);
+    return `[METEO] Température 1°C, ressenti -2°C, humidité 78%, pression 1013 hPa, pluie 0,3 mm, neige 0 cm. Inversion thermique non détectée.
 [ROUTE] RD1091 dégagée avec quelques plaques de gel. Trafic fluide.
 [STATIONS] Alpe d'Huez : 0°C\nLes 2 Alpes : -2°C\nVaujany : -1°C\nOz-en-Oisans : -1°C\nSaint-Christophe-en-Oisans : -3°C\nVillard-Reculas : -4°C
 [RISQUES] sismique : très faible. crues : vert.
 [EVENEMENTS] Marché des producteurs à Bourg-d'Oisans\nCourse de ski de fond à Vaujany\nConcert "Cimes & Son" à la Maison des Sports
 [LUNE] Pleine Lune`;
-const SAMPLE_AUDIO_BASE64 = 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=';
+  }
+}
 
 const server = http.createServer((req, res) => {
   const { method, url } = req;
   if (method === 'POST' && url === '/generate') {
     collectRequestBody(req)
-      .then((body) => {
+      .then(async (body) => {
         console.log('Mock /generate prompt:', body.prompt || '[vide]');
-        response(res, 200, { text: MOCK_TEXT, sources: [{ name: 'local-mock-llm' }], prompt: body.prompt });
+        const text = await generateMockText();
+        response(res, 200, { text, sources: [{ name: 'local-mock-llm' }], prompt: body.prompt });
       })
       .catch((error) => response(res, 400, { error: error.message }));
     return;
