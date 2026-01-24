@@ -170,13 +170,6 @@ Pour adapter l'application à une autre région (ex: Chamonix, Grenoble) :
 
 ---
 
-## 📚 Documentation
-
-- **`docs/VERCEL_DEPLOY.md`** - Guide déploiement Vercel pas-à-pas (5 min)
-- **`docs/DEPLOYMENT.md`** - Autres plateformes (Netlify, Docker, etc.)
-- **`docs/PROMPT_TEST.md`** - Tests et validation prompt Gemini
-- **`docs/AUTH_INTEGRATION.md`** - Intégration authentification (Clerk, Google OAuth)
-
 ---
 
 ## 🧪 Tests
