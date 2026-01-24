@@ -2,7 +2,10 @@
 
 Ce fichier centralise le backlog du projet Allo‑Meteo (issues, tâches et décisions en suspens).
 
-Généré automatiquement par l'assistant. Date: 2026-01-18
+**ATTENTION**: Ce backlog fait référence à l'ancien package `local-ai-mcp` qui a été supprimé le 2026-01-24.
+La plupart des tâches Docker/local-ai ne sont plus pertinentes.
+
+Généré automatiquement par l'assistant. Date: 2026-01-18 (obsolète)
 
 ## Tâches principales
 

@@ -11,8 +11,8 @@ Principes généraux
 
 Exemple .env (dev local) — sauvegarde en `.env` (ne pas committer)
 
-# Gemini (existant)
-GEMINI_API_KEY=...
+# Gemini (OBLIGATOIRE pour l'application)
+GEMINI_API_KEY=your-gemini-api-key-here
 
 # Clerk - frontend API key (Vite prefixed)
 VITE_CLERK_FRONTEND_API=clerk.example.frontend.api
