@@ -51,9 +51,7 @@ Application web de bulletins météo en temps réel pour la région de l'Oisans 
 
 ## 🚀 Run Locally
 
-Consultez `docs/BOOTSTRAP.md` pour le script d'amorçage macOS et `docs/DOCKER.md` pour l'utilisation / sécurité du conteneur `local-ai-mcp`.
-
-**Prerequisites:** Node.js 18+
+**Prerequisites:** Node.js 18+ et **clé API Gemini obligatoire**
 
 1. **Install dependencies:**
    ```bash
@@ -62,7 +60,8 @@ Consultez `docs/BOOTSTRAP.md` pour le script d'amorçage macOS et `docs/DOCKER.m
 
 2. **Set the `GEMINI_API_KEY` in `.env`:**
    ```bash
-   echo "GEMINI_API_KEY=your_key_here" > .env
+   cp .env.example .env
+   # Éditer .env et ajouter votre clé Gemini
    ```
 
 3. **Run the app:**
@@ -71,6 +70,10 @@ Consultez `docs/BOOTSTRAP.md` pour le script d'amorçage macOS et `docs/DOCKER.m
    ```
 
 4. **Open:** http://localhost:3000
+
+## 🌐 Déploiement Production
+
+Consultez **`docs/DEPLOYMENT.md`** pour le guide complet de déploiement sur Vercel/Netlify avec configuration des secrets GitHub.
 
 ---
 

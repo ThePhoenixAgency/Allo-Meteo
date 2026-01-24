@@ -22,15 +22,34 @@ import { GoogleGenAI, Modality } from "@google/genai";
 
 const LOCATION = "Le Bourg d'Oisans";
 const REPO_URL = "https://github.com/ThePhoenixAgency/Allo-meteo";
-const LOCAL_AI_BASE_URLS = ['http://192.168.1.57:6667'];
-const LOCAL_AI_BASE_URL = LOCAL_AI_BASE_URLS[0]; // legacy compatibility (now pointed at LM Studio)
 const LOCATION_COORDS = { lat: 45.0053, lon: 6.0748 };
 const hasGeminiKey = Boolean(process.env.API_KEY);
-const TEXT_COOLDOWN_MS = 5000;
-const TTS_COOLDOWN_MS = 5000;
 const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes pour économiser les tokens Gemini
 const USER_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - considère l'utilisateur inactif après ce délai
 const COOKIE_EXPIRY_DAYS = 395; // 13 mois (conformité RGPD max)
+
+// IA locale optionnelle (fallback si Gemini indisponible) - détection automatique
+const LOCAL_AI_BASE_URLS = [
+  'http://localhost:1234',      // LM Studio par défaut
+  'http://localhost:8080',      // Ollama
+  'http://localhost:11434',     // Ollama alternatif
+  'http://127.0.0.1:1234',
+  'http://127.0.0.1:8080',
+];
+
+const LOCAL_TEXT_ENDPOINTS = [
+  '/v1/chat/completions',       // LM Studio / OpenAI compatible
+  '/v1/completions',
+  '/api/generate',              // Ollama
+  '/v1/responses',
+  '/generate',
+];
+
+const LOCAL_TTS_ENDPOINTS = [
+  '/v1/audio/speech',           // OpenAI compatible TTS
+  '/tts',
+  '/api/tts',
+];
 
 // Gestion cookies RGPD
 const setCookie = (name: string, value: string, days: number = COOKIE_EXPIRY_DAYS) => {
@@ -148,224 +167,161 @@ const buildExpertPrompt = () => {
       BALISES: [METEO], [ROUTE], [STATIONS], [RISQUES], [EVENEMENTS], [LUNE], [INVERSION]. RÉPONSE TRÈS COURTE ET RAPIDE SANS BLA-BLA.`;
 };
 
-type LocalTextResponse = {
-  text?: string;
-  sources?: any[];
-};
-
-const LOCAL_TEXT_ENDPOINTS = [
-  '/v1/responses', '/v1/chat/completions', '/v1/completions',
-  '/generate', '/api/generate', '/api/inference', '/api/v1/generate',
-  '/v1/generate', '/api/completions', '/completions', '/inference'
-];
-
-async function tryLocalEndpoint(base: string, path: string, prompt: string) {
+// Essayer un endpoint local pour la génération de texte
+async function tryLocalTextEndpoint(base: string, path: string, prompt: string) {
   const url = `${base}${path}`;
-  // include selected model if present
-  const selectedModel = typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_model') || '').trim() : '';
   const payloads = [
-    // prefer model-aware payloads
-    ...(selectedModel ? [{ model: selectedModel, input: prompt }, { model: selectedModel, messages: [{ role: 'user', content: prompt }] }] : []),
+    { model: 'default', messages: [{ role: 'user', content: prompt }] },
     { prompt },
     { input: prompt },
-    { inputs: prompt },
-    { text: prompt },
-    { messages: [{ role: 'user', content: prompt }] },
-    { model: 'default', prompt },
   ];
 
   for (const body of payloads) {
     try {
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const text = await res.text();
-      let json: any = null;
-      try { json = JSON.parse(text); } catch (e) { json = null; }
-      if (res.ok && json) {
-        try { console.info(`Probe ${base}${path} OK ${res.status} - body preview:`, JSON.stringify(json).slice(0, 500)); } catch (e) { }
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10000) // 10s timeout
+      });
 
-        const extractText = (obj: any): string | null => {
-          if (!obj) return null;
-          if (typeof obj === 'string') return obj;
-          if (obj.text && typeof obj.text === 'string') return obj.text;
-          if (obj.generated_text && typeof obj.generated_text === 'string') return obj.generated_text;
-          if (Array.isArray(obj.output) && obj.output.length) {
-            const parts: string[] = [];
-            for (const item of obj.output) {
-              if (item && Array.isArray(item.content)) {
-                for (const c of item.content) {
-                  if (c && c.type === 'output_text' && typeof c.text === 'string') parts.push(c.text);
-                  else if (typeof c === 'string') parts.push(c);
-                  else if (c && c.text && typeof c.text === 'string') parts.push(c.text);
-                }
-              }
-              if (item && typeof item.text === 'string') parts.push(item.text);
-            }
-            if (parts.length) return parts.join('\n');
-          }
-          if (obj.choices && Array.isArray(obj.choices) && obj.choices[0]) {
-            const ch = obj.choices[0];
-            if (typeof ch.text === 'string') return ch.text;
-            if (ch.message && ch.message.content && typeof ch.message.content === 'string') return ch.message.content;
-          }
-          if (Array.isArray(obj.output)) return obj.output.map((x: any) => (typeof x === 'string' ? x : JSON.stringify(x))).join('\n');
-          return null;
-        };
+      if (!res.ok) continue;
+      const json = await res.json();
 
-        const extracted = extractText(json) || extractText(json.candidates?.[0]) || extractText(json.choices?.[0]);
-        if (extracted) {
-          try { console.info(`Using extracted text from ${base}${path}:`, extracted.slice(0, 200)); } catch (e) { }
-          const tokens = json?.usage?.total_tokens || json?.usage?.total || json?.token_count || Math.max(1, Math.round((extracted.split(/\s+/).length) / 0.75));
-          return { text: extracted, sources: json.sources || json.metadata || [], tokens };
-        }
+      // Extraire le texte de différents formats de réponse
+      let text = null;
+      if (json.choices?.[0]?.message?.content) text = json.choices[0].message.content;
+      else if (json.choices?.[0]?.text) text = json.choices[0].text;
+      else if (json.response) text = json.response;
+      else if (json.text) text = json.text;
 
+      if (text) {
+        console.info(`✅ IA locale détectée: ${base}${path}`);
+        return { text, sources: [] };
       }
-      if (json && json.error) {
-        console.debug(`local endpoint ${base}${path} responded with error:`, json.error);
-        continue;
-      }
-      try { console.debug(`Probe ${base}${path} returned ${res.status} but no usable fields. body preview:`, (json ? JSON.stringify(json).slice(0, 500) : 'non-json response')); } catch (e) { }
     } catch (e) {
-      console.debug(`failed ${url}:`, e.message || e);
       continue;
     }
   }
   return null;
 }
 
-const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: string; sources: any[], perf?: { latencyMs: number, model?: string, tokens?: number } }> => {
+const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: string; sources: any[] }> => {
+  // Priorité 1: Gemini (production)
   if (hasGeminiKey) {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        thinkingConfig: { thinkingBudget: 0 }
-      },
-    });
-    return {
-      text: response.text || '',
-      sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [],
-    };
-  }
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          thinkingConfig: { thinkingBudget: 0 }
+        },
+      });
 
-  const t0 = performance.now();
-  // try cached endpoint
-  const cached = (localStorage.getItem('allo_meteo_local_text_endpoint') || '').trim();
-  if (cached) {
-    try { console.info('Trying cached text endpoint:', cached); } catch (e) { }
-    for (const base of LOCAL_AI_BASE_URLS) {
-      const result = await tryLocalEndpoint(base, cached, prompt);
-      if (result) {
-        const latency = Math.round(performance.now() - t0);
-        console.info('Text fetched from cached endpoint');
-        localStorage.setItem('allo_meteo_local_text_endpoint', `${base}${cached}`);
-        return { ...result, perf: { latencyMs: latency, model: localStorage.getItem('allo_meteo_model') || undefined, tokens: result.tokens || undefined } };
-      }
+      return {
+        text: response.text || '',
+        sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [],
+      };
+    } catch (error) {
+      console.warn('❌ Gemini API erreur:', error);
+      // Continue vers fallback local
     }
-    localStorage.removeItem('allo_meteo_local_text_endpoint');
   }
 
-  // probe endpoints across bases
+  // Priorité 2: IA locale (fallback si branchée)
+  console.info('🔍 Recherche d\'une IA locale en fallback...');
   for (const base of LOCAL_AI_BASE_URLS) {
-    for (const p of LOCAL_TEXT_ENDPOINTS) {
-      const result = await tryLocalEndpoint(base, p, prompt);
+    for (const path of LOCAL_TEXT_ENDPOINTS) {
+      const result = await tryLocalTextEndpoint(base, path, prompt);
       if (result) {
-        const latency = Math.round(performance.now() - t0);
-        localStorage.setItem('allo_meteo_local_text_endpoint', `${base}${p}`);
-        console.info(`Detected working local text endpoint: ${base}${p}`);
-        return { ...result, perf: { latencyMs: latency, model: localStorage.getItem('allo_meteo_model') || undefined, tokens: result.tokens || undefined } };
+        localStorage.setItem('allo_meteo_local_text_endpoint', `${base}${path}`);
+        return result;
       }
     }
   }
 
-  throw new Error('Aucun endpoint local compatible trouvé');
+  throw new Error('❌ Aucune IA disponible (Gemini offline + pas d\'IA locale détectée)');
 };
 
-type LocalTtsResponse = {
-  audio?: string;
-};
-
-const LOCAL_TTS_ENDPOINTS = ['/tts', '/api/tts', '/api/speech', '/v1/tts', '/api/v1/tts'];
-
+// Essayer un endpoint local pour TTS
 async function tryLocalTtsEndpoint(base: string, path: string, prompt: string) {
   const url = `${base}${path}`;
-  const payloads = [{ prompt }, { text: prompt }, { input: prompt }, { messages: [{ role: 'user', content: prompt }] }];
+  const payloads = [
+    { input: prompt },
+    { text: prompt },
+    { prompt },
+  ];
+
   for (const body of payloads) {
     try {
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const json = await res.json().catch(() => null);
-      if (res.ok && json) {
-        try { console.info(`Probe tts ${base}${path} OK ${res.status} - body preview:`, JSON.stringify(json).slice(0, 500)); } catch (e) { }
-        if (json.audio || json.base64 || json.data) {
-          try { console.info(`Using audio field from ${base}${path}, length: ${((json.audio || json.base64 || json.data) || '').length}`); } catch (e) { }
-          return (json.audio || json.base64 || json.data) as string;
-        }
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000) // 15s timeout pour TTS
+      });
+
+      if (!res.ok) continue;
+      const json = await res.json();
+
+      // Extraire l'audio base64
+      const audio = json.audio || json.base64 || json.data;
+      if (audio && typeof audio === 'string') {
+        console.info(`✅ TTS local détecté: ${base}${path}`);
+        return audio;
       }
-      if (json && json.error) {
-        console.debug(`local tts ${base}${path} replied error`, json.error);
-        continue;
-      }
-      try { console.debug(`Probe tts ${base}${path} returned ${res.status} but no audio field. body preview:`, (json ? JSON.stringify(json).slice(0, 500) : 'non-json response')); } catch (e) { }
     } catch (e) {
-      console.debug(`failed tts ${url}:`, e.message || e);
       continue;
     }
   }
   return null;
 }
 
-
 const fetchBulletinAudioWithFallback = async (prompt: string) => {
-  if (!prompt) return { audio: null, perf: undefined };
+  if (!prompt) return { audio: null };
   const t0 = performance.now();
+
+  // Priorité 1: Gemini TTS (production)
   if (hasGeminiKey) {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-preview-tts',
-      contents: [{ parts: [{ text: prompt }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
-      },
-    });
-    const audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
-    const perf = { latencyMs: Math.round(performance.now() - t0), model: 'gemini' };
-    return { audio, perf };
-  }
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-tts',
+        contents: [{ parts: [{ text: prompt }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+        },
+      });
 
-  // try cached tts endpoint
-  const cachedTts = (localStorage.getItem('allo_meteo_local_tts_endpoint') || '').trim();
-  if (cachedTts) {
-    try { console.info('Trying cached TTS endpoint:', cachedTts); } catch (e) { }
-    for (const base of LOCAL_AI_BASE_URLS) {
-      try {
-        const path = cachedTts.startsWith('http') ? cachedTts.replace(base, '') : cachedTts;
-        const audio = await tryLocalTtsEndpoint(base + '', path, prompt);
-        if (audio) {
-          const perf = { latencyMs: Math.round(performance.now() - t0), model: localStorage.getItem('allo_meteo_model') || undefined };
-          console.info('Audio fetched from cached TTS endpoint');
-          localStorage.setItem('allo_meteo_local_tts_endpoint', `${base}${path}`);
-          return { audio, perf };
-        }
-      } catch (e) { }
-    }
-    localStorage.removeItem('allo_meteo_local_tts_endpoint');
-  }
-
-  for (const base of LOCAL_AI_BASE_URLS) {
-    for (const p of LOCAL_TTS_ENDPOINTS) {
-      const audio = await tryLocalTtsEndpoint(base, p, prompt);
+      const audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
       if (audio) {
-        const perf = { latencyMs: Math.round(performance.now() - t0), model: localStorage.getItem('allo_meteo_model') || undefined };
-        localStorage.setItem('allo_meteo_local_tts_endpoint', `${base}${p}`);
-        console.info(`Detected working local tts endpoint: ${base}${p}`);
+        const perf = { latencyMs: Math.round(performance.now() - t0), model: 'gemini-tts' };
+        return { audio, perf };
+      }
+    } catch (error) {
+      console.warn('❌ Gemini TTS erreur:', error);
+      // Continue vers fallback local
+    }
+  }
+
+  // Priorité 2: TTS local (fallback si branché)
+  console.info('🔍 Recherche d\'un serveur TTS local en fallback...');
+  for (const base of LOCAL_AI_BASE_URLS) {
+    for (const path of LOCAL_TTS_ENDPOINTS) {
+      const audio = await tryLocalTtsEndpoint(base, path, prompt);
+      if (audio) {
+        localStorage.setItem('allo_meteo_local_tts_endpoint', `${base}${path}`);
+        const perf = { latencyMs: Math.round(performance.now() - t0), model: 'local-tts' };
         return { audio, perf };
       }
     }
   }
 
-  return { audio: null, perf: undefined };
+  console.warn('⚠️ Aucun TTS disponible (Gemini + local)');
+  return { audio: null };
 };
 
 const App = () => {
@@ -495,21 +451,33 @@ const App = () => {
   };
 
   const detectLocalModels = async () => {
+    console.info('🔍 Détection des modèles IA locaux...');
     for (const base of LOCAL_AI_BASE_URLS) {
       try {
-        const res = await fetch(`${base}/v1/models`);
+        const res = await fetch(`${base}/v1/models`, {
+          signal: AbortSignal.timeout(5000) // 5s timeout
+        });
         if (!res.ok) continue;
-        const json = await res.json().catch(() => null);
-        if (!json) continue;
+        const json = await res.json();
+
         let models: string[] = [];
         if (Array.isArray(json.data)) models = json.data.map((m: any) => m.id).filter(Boolean);
-        else if (Array.isArray(json.models)) models = json.models.map((m: any) => m.id).filter(Boolean);
+        else if (Array.isArray(json.models)) models = json.models.map((m: any) => m.id || m.name).filter(Boolean);
         else if (Array.isArray(json)) models = json.map((m: any) => (m.id || m)).filter(Boolean);
-        if (models.length) { setAvailableModels(models); setAiEndpoint(base); console.info('Detected models at', base, models.slice(0, 10)); return; }
-      } catch (e) { console.debug('detectLocalModels failed for', base, e); }
+
+        if (models.length) {
+          setAvailableModels(models);
+          setAiEndpoint(base);
+          console.info('✅ IA locale détectée:', base, '- Modèles:', models.slice(0, 5).join(', '));
+          return;
+        }
+      } catch (e) {
+        // Silencieux - normal si aucune IA locale
+      }
     }
     setAvailableModels([]);
     setAiEndpoint(null);
+    console.info('ℹ️ Aucune IA locale détectée (mode Gemini uniquement)');
   };
 
   // Marque l'activité utilisateur pour déclencher les requêtes API
