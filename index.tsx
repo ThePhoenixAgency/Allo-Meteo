@@ -13,6 +13,7 @@ import {
   Ticket, Github, User, ArrowUpRight, ArrowDownRight,
   Waves as FloodIcon, Zap as SeismicIcon, Cookie, Shield
 } from 'lucide-react';
+import { GoogleGenAI, Modality } from "@google/genai";
 
 /**
  * @file Allo-Météo & Route Expert - Version 3.4.0
@@ -21,12 +22,39 @@ import {
 
 const LOCATION = "Le Bourg d'Oisans";
 const REPO_URL = "https://github.com/ThePhoenixAgency/Allo-meteo";
-const LOCATION_COORDS = { lat: 45.0053, lon: 6.0748 };
-const TEXT_COOLDOWN_MS = 5000;
-const TTS_COOLDOWN_MS = 5000;
+
+// Coordonnées GPS pour Prevision-Meteo.ch API
+const LOCATION_COORDS = { lat: 45.0520, lon: 6.0301 }; // Le Bourg-d'Oisans
+
+// Stations de ski de l'Oisans (coordonnées GPS pour météo)
+const STATIONS_COORDS = {
+  "Alpe d'Huez": { lat: 45.0926, lon: 6.0683 },
+  "Les 2 Alpes": { lat: 45.0043, lon: 6.1197 },
+  "Vaujany": { lat: 45.1576, lon: 6.0768 },
+  "Oz-en-Oisans": { lat: 45.2167, lon: 6.0667 },
+  "Saint-Christophe-en-Oisans": { lat: 44.9581, lon: 6.1767 },
+  "Villard-Reculas": { lat: 45.0942, lon: 6.0309 }
+};
+const hasGeminiKey = Boolean(process.env.API_KEY);
 const AUTO_REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes pour économiser les tokens Gemini
 const USER_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - considère l'utilisateur inactif après ce délai
 const COOKIE_EXPIRY_DAYS = 395; // 13 mois (conformité RGPD max)
+
+// IA locale optionnelle (UNIQUEMENT pour TTS audio en fallback)
+// L'IA locale N'A PAS accès à internet donc ne peut PAS remplacer Gemini pour la météo
+const LOCAL_AI_BASE_URLS = [
+  'http://localhost:1234',      // LM Studio par défaut
+  'http://localhost:8080',      // Ollama
+  'http://localhost:11434',     // Ollama alternatif
+  'http://127.0.0.1:1234',
+  'http://127.0.0.1:8080',
+];
+
+const LOCAL_TTS_ENDPOINTS = [
+  '/v1/audio/speech',           // OpenAI compatible TTS
+  '/tts',
+  '/api/tts',
+];
 
 // Gestion cookies RGPD
 const setCookie = (name: string, value: string, days: number = COOKIE_EXPIRY_DAYS) => {
@@ -129,109 +157,167 @@ async function decodeAudioData(
 
 const buildExpertPrompt = () => {
   const today = new Date().toLocaleDateString('fr-FR');
-  return `INFOS OISANS EN DIRECT - ${today} :
-      NE CHERCHE PAS VILLARD-BONNOT NI ESPACE ARAGON.
-      1. METEO: Température actuelle au Bourg d'Oisans (°C), ressenti, humidité (%), pression (hPa), pluie (mm), neige (cm).
-      DÉTERMINE SI INVERSION THERMIQUE active.
-      2. ROUTE: RD1091 (Grenoble-Oisans-Briançon).
-      3. STATIONS: Températures actuelles (°C) EXCLUSIVEMENT pour :
-      Alpe d'Huez, Les 2 Alpes, Vaujany, Oz-en-Oisans, Saint-Christophe-en-Oisans, Villard-Reculas.
-      FORMAT STRICT STATIONS: Une station par ligne, "Nom station : Valeur°C".
-      4. RISQUES: Analyse PRÉDICTIVE basée sur météo actuelle. Niveau sismique (Faible/Modéré/Élevé), Crues (Vert/Jaune/Orange/Rouge).
-      Si AUCUN RISQUE ACTIF: Écris "Aucune alerte en cours".
-      5. EVENEMENTS: 3 évènements (1 par ligne).
-      6. LUNE: Phase.
-      BALISES: [METEO], [ROUTE], [STATIONS], [RISQUES], [EVENEMENTS], [LUNE], [INVERSION]. RÉPONSE TRÈS COURTE ET RAPIDE SANS BLA-BLA.`;
+  return `Tu es un assistant météo pour l'Oisans. RÉPONDS UNIQUEMENT avec le format EXACT ci-dessous. N'ajoute AUCUN texte d'introduction ni de conclusion.
+
+FORMAT OBLIGATOIRE (respecte les balises EXACTEMENT):
+
+[METEO]
+Température: X°C
+Ciel: (ensoleillé/nuageux/pluvieux/neigeux)
+Humidité: X%
+Pression: XhPa
+Pluie: Xmm
+Neige: Xcm
+
+[INVERSION]
+(OUI ou NON)
+
+[STATIONS]
+Alpe d'Huez : X°C
+Les 2 Alpes : X°C
+Vaujany : X°C
+Oz-en-Oisans : X°C
+Saint-Christophe-en-Oisans : X°C
+Villard-Reculas : X°C
+
+[ROUTE]
+État de la RD1091 (Grenoble-Oisans-Briançon): (fluide/ralenti/coupée/conditions hivernales/etc.)
+
+[RISQUES]
+Sismique: (Faible/Modéré/Élevé ou "Aucune alerte en cours")
+Crues: (Vert/Jaune/Orange/Rouge ou "Aucune alerte en cours")
+
+[EVENEMENTS]
+- Événement 1
+- Événement 2
+- Événement 3
+
+[LUNE]
+Phase actuelle de la lune
+
+INSTRUCTIONS:
+- Date: ${today}
+- NE CHERCHE PAS Villard-Bonnot ni Espace Aragon
+- Utilise Google Search pour obtenir les données météo en temps réel
+- Sois TRÈS CONCIS, données brutes uniquement
+- RESPECTE EXACTEMENT le format avec les balises [SECTION]`;
 };
 
-async function tryLocalEndpoint(base: string, path: string, prompt: string) {
+const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: string; sources: any[] }> => {
+  // Gemini OBLIGATOIRE pour la recherche web (météo, stations, etc.)
+  if (!hasGeminiKey) {
+    throw new Error('❌ Clé API Gemini requise. Configurez GEMINI_API_KEY dans .env');
+  }
+
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+        thinkingConfig: { thinkingBudget: 0 }
+      },
+    });
+
+    const text = response.text || '';
+
+    // Vérifier que la réponse contient bien les balises requises
+    const requiredSections = ['[METEO]', '[STATIONS]', '[ROUTE]', '[RISQUES]', '[LUNE]'];
+    const missingSections = requiredSections.filter(section => !text.includes(section));
+
+    if (missingSections.length > 0) {
+      console.warn('⚠️ Sections manquantes dans la réponse Gemini:', missingSections);
+      // On continue quand même, l'UI gèrera les sections manquantes
+    }
+
+    return {
+      text,
+      sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks || [],
+    };
+  } catch (error: any) {
+    console.error('❌ Erreur Gemini API:', error);
+    throw new Error(`Gemini API erreur: ${error.message || 'Erreur inconnue'}`);
+  }
+};
+
+// Essayer un endpoint local pour TTS
+async function tryLocalTtsEndpoint(base: string, path: string, prompt: string) {
   const url = `${base}${path}`;
-  // include selected model if present
-  const selectedModel = typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_model') || '').trim() : '';
   const payloads = [
-    // prefer model-aware payloads
-    ...(selectedModel ? [{ model: selectedModel, input: prompt }, { model: selectedModel, messages: [{ role: 'user', content: prompt }] }] : []),
-    { prompt },
     { input: prompt },
-    { inputs: prompt },
     { text: prompt },
-    { messages: [{ role: 'user', content: prompt }] },
-    { model: 'default', prompt },
+    { prompt },
   ];
 
   for (const body of payloads) {
     try {
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const text = await res.text();
-      let json: any = null;
-      try { json = JSON.parse(text); } catch (e) { json = null; }
-      if (res.ok && json) {
-        try { console.info(`Probe ${base}${path} OK ${res.status} - body preview:`, JSON.stringify(json).slice(0, 500)); } catch (e) { }
-        if (path === '/v1/chat/completions') {
-          console.log('LM Studio response for /v1/chat/completions:', json);
-        }
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000) // 15s timeout pour TTS
+      });
 
-        const extractText = (obj: any): string | null => {
-          if (!obj) return null;
-          if (typeof obj === 'string') return obj;
-          if (obj.text && typeof obj.text === 'string') return obj.text;
-          if (obj.generated_text && typeof obj.generated_text === 'string') return obj.generated_text;
-          if (Array.isArray(obj.output) && obj.output.length) {
-            const parts: string[] = [];
-            for (const item of obj.output) {
-              if (item && Array.isArray(item.content)) {
-                for (const c of item.content) {
-                  if (c && c.type === 'output_text' && typeof c.text === 'string') parts.push(c.text);
-                  else if (typeof c === 'string') parts.push(c);
-                  else if (c && c.text && typeof c.text === 'string') parts.push(c.text);
-                }
-              }
-              if (item && typeof item.text === 'string') parts.push(item.text);
-            }
-            if (parts.length) return parts.join('\n');
-          }
-          if (obj.choices && Array.isArray(obj.choices) && obj.choices[0]) {
-            const ch = obj.choices[0];
-            if (typeof ch.text === 'string') return ch.text;
-            if (ch.message && ch.message.content && typeof ch.message.content === 'string') return ch.message.content;
-          }
-          if (Array.isArray(obj.output)) return obj.output.map((x: any) => (typeof x === 'string' ? x : JSON.stringify(x))).join('\n');
-          return null;
-        };
+      if (!res.ok) continue;
+      const json = await res.json();
 
-        const extracted = extractText(json) || extractText(json.candidates?.[0]) || extractText(json.choices?.[0]);
-        if (extracted) {
-          try { console.info(`Using extracted text from ${base}${path}:`, extracted.slice(0, 200)); } catch (e) { }
-          const tokens = json?.usage?.total_tokens || json?.usage?.total || json?.token_count || Math.max(1, Math.round((extracted.split(/\s+/).length) / 0.75));
-          return { text: extracted, sources: json.sources || json.metadata || [], tokens };
-        } else {
-          console.warn(`Failed to extract text from ${base}${path} response:`, json);
-        }
-
+      // Extraire l'audio base64
+      const audio = json.audio || json.base64 || json.data;
+      if (audio && typeof audio === 'string') {
+        console.info(`✅ TTS local détecté: ${base}${path}`);
+        return audio;
       }
-      if (json && json.error) {
-        console.debug(`local endpoint ${base}${path} responded with error:`, json.error);
-        continue;
-      }
-      try { console.debug(`Probe ${base}${path} returned ${res.status} but no usable fields. body preview:`, (json ? JSON.stringify(json).slice(0, 500) : 'non-json response')); } catch (e) { }
     } catch (e) {
-      console.debug(`failed ${url}:`, e.message || e);
       continue;
     }
   }
-const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: string; sources: any[], perf?: { latencyMs: number, model?: string, tokens?: number } }> => {
-  // No AI available, return default text
-  return {
-    text: 'Bulletin météo expert non disponible. Consultez les données météorologiques ci-dessous.',
-    sources: [],
-  };
-};
-
+  return null;
+}
 
 const fetchBulletinAudioWithFallback = async (prompt: string) => {
-  if (!prompt) return { audio: null, perf: undefined };
-  // No AI available for TTS
-  return { audio: null, perf: undefined };
+  if (!prompt) return { audio: null };
+  const t0 = performance.now();
+
+  // Priorité 1: Gemini TTS (production)
+  if (hasGeminiKey) {
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-tts',
+        contents: [{ parts: [{ text: prompt }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+        },
+      });
+
+      const audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
+      if (audio) {
+        const perf = { latencyMs: Math.round(performance.now() - t0), model: 'gemini-tts' };
+        return { audio, perf };
+      }
+    } catch (error) {
+      console.warn('❌ Gemini TTS erreur:', error);
+      // Continue vers fallback local
+    }
+  }
+
+  // Priorité 2: TTS local (fallback si branché)
+  console.info('🔍 Recherche d\'un serveur TTS local en fallback...');
+  for (const base of LOCAL_AI_BASE_URLS) {
+    for (const path of LOCAL_TTS_ENDPOINTS) {
+      const audio = await tryLocalTtsEndpoint(base, path, prompt);
+      if (audio) {
+        localStorage.setItem('allo_meteo_local_tts_endpoint', `${base}${path}`);
+        const perf = { latencyMs: Math.round(performance.now() - t0), model: 'local-tts' };
+        return { audio, perf };
+      }
+    }
+  }
+
+  console.warn('⚠️ Aucun TTS disponible (Gemini + local)');
+  return { audio: null };
 };
 
 const App = () => {
@@ -254,7 +340,7 @@ const App = () => {
 
   // MCP configuration (external micro-MCP server)
   const [mcpUrl, setMcpUrl] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_url') || '') : ''));
-  const [mcpHost, setMcpHost] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_host') || 'http://localhost:1234') : 'http://localhost:1234'));
+  const [mcpHost, setMcpHost] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_host') || LOCAL_AI_BASE_URLS[0]) : LOCAL_AI_BASE_URLS[0]));
   const [mcpSecret, setMcpSecret] = useState<string>(() => (typeof localStorage !== 'undefined' ? (localStorage.getItem('allo_meteo_mcp_secret') || '') : ''));
   const [mcpStatus, setMcpStatus] = useState<any>(null);
 
@@ -325,7 +411,7 @@ const App = () => {
   const fetchManualWeather = async () => {
     try {
       setManualLoading(true);
-      const url = `https://www.prevision-meteo.ch/services/json/lat=${LOCATION_COORDS.lat}&lon=${LOCATION_COORDS.lon}`;
+      const url = `https://www.prevision-meteo.ch/services/json/lat=${LOCATION_COORDS.lat}lng=${LOCATION_COORDS.lon}`;
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Prevision-Meteo répond ${response.status}`);
@@ -358,6 +444,36 @@ const App = () => {
     } finally {
       setManualLoading(false);
     }
+  };
+
+  const detectLocalModels = async () => {
+    console.info('🔍 Détection des modèles IA locaux...');
+    for (const base of LOCAL_AI_BASE_URLS) {
+      try {
+        const res = await fetch(`${base}/v1/models`, {
+          signal: AbortSignal.timeout(5000) // 5s timeout
+        });
+        if (!res.ok) continue;
+        const json = await res.json();
+
+        let models: string[] = [];
+        if (Array.isArray(json.data)) models = json.data.map((m: any) => m.id).filter(Boolean);
+        else if (Array.isArray(json.models)) models = json.models.map((m: any) => m.id || m.name).filter(Boolean);
+        else if (Array.isArray(json)) models = json.map((m: any) => (m.id || m)).filter(Boolean);
+
+        if (models.length) {
+          setAvailableModels(models);
+          setAiEndpoint(base);
+          console.info('✅ IA locale détectée:', base, '- Modèles:', models.slice(0, 5).join(', '));
+          return;
+        }
+      } catch (e) {
+        // Silencieux - normal si aucune IA locale
+      }
+    }
+    setAvailableModels([]);
+    setAiEndpoint(null);
+    console.info('ℹ️ Aucune IA locale détectée (mode Gemini uniquement)');
   };
 
   // Marque l'activité utilisateur pour déclencher les requêtes API
@@ -493,13 +609,16 @@ const App = () => {
 
     // Toujours fetch la météo basique (pas coûteux)
     fetchManualWeather();
+    detectLocalModels();
 
-    // Fetch IA toujours au chargement pour dev
-    if (cacheExpired) {
-      console.info('🚀 Chargement IA au démarrage');
+    // Fetch IA seulement si utilisateur actif ET cache expiré
+    if (isUserActive() && cacheExpired) {
+      console.info('🚀 Chargement IA pour utilisateur actif');
       fetchExpertData();
+    } else if (!isUserActive()) {
+      console.info('💤 Pas d\'utilisateur actif - requêtes IA désactivées');
     } else {
-      console.info('📦 Utilisation cache IA');
+      console.info('📦 Utilisation cache IA - expire dans', Math.round((AUTO_REFRESH_INTERVAL_MS - (Date.now() - parseInt(lastFetch))) / 60000), 'min');
     }
 
     // Auto-refresh toutes les AUTO_REFRESH_INTERVAL_MS (mais seulement si utilisateur actif)
@@ -993,6 +1112,7 @@ const App = () => {
               <div><strong>Tokens:</strong> {lastPerf?.tokens ?? '-'}</div>
               <div><strong>Rate:</strong> {textCooldownRemaining ? `texte cooldown ${Math.ceil(textCooldownRemaining / 1000)}s` : 'ok'} · {ttsCooldownRemaining ? `tts cooldown ${Math.ceil(ttsCooldownRemaining / 1000)}s` : 'ok'}</div>
               <div className="flex gap-2 mt-3">
+                <button onClick={() => { localStorage.removeItem('allo_meteo_local_text_endpoint'); detectLocalModels(); }} className="px-3 py-2 bg-blue-600 text-white rounded">Ré-detecter</button>
                 <button onClick={() => { setAvailableModels([]); setSelectedModel(''); localStorage.removeItem('allo_meteo_model'); }} className="px-3 py-2 bg-white border rounded">Reset modèle</button>
               </div>
             </div>
@@ -1003,9 +1123,10 @@ const App = () => {
           </div>
         </aside>
       </main>
+      <footer className="max-w-7xl mx-auto px-4 mt-20 py-12 border-t border-slate-200 text-center"><p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.5em]">© 2026 ALLO-MÉTÉO OISANS • STATION DE CONTRÔLE</p></footer>
     </div>
   );
 };
 
 const root = createRoot(document.getElementById('root')!);
-root.render(React.createElement(App));
+root.render(<App />);

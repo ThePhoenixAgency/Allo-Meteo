@@ -18,9 +18,9 @@
 ## 📋 Vue d'ensemble
 
 Application web de bulletins météo en temps réel pour la région de l'Oisans (Alpes françaises) avec :
-- 🤖 **IA générative** (Google Gemini 2.5 Flash + LM Studio local)
-- 🗣️ **Synthèse vocale** des bulletins météo
-- 🏔️ **Prévisions stations** (Alpe d'Huez, Les 2 Alpes, Vaujany...)
+- 🤖 **IA générative** (Google Gemini 2.5 Flash avec recherche web)
+- 🗣️ **Synthèse vocale** des bulletins météo (Gemini TTS)
+- 🏔️ **Prévisions 7 stations** (Le Bourg-d'Oisans, Alpe d'Huez, Les 2 Alpes, Vaujany, Oz, St-Christophe, Villard-Reculas)
 - ⚠️ **Alertes risques** (sismique, crues, routes)
 - 🌡️ **Données météo** via Prevision-Meteo.ch
 - 🍪 **RGPD compliant** avec bandeau cookies
@@ -35,8 +35,8 @@ Application web de bulletins météo en temps réel pour la région de l'Oisans 
 - **Tailwind CSS** - Styling utility-first (intégré)
 
 ### IA & APIs
-- **Google Gemini AI 2.5 Flash** - Analyse météo intelligente
-- **LM Studio** - Fallback IA local (OpenAI-compatible)
+- **Google Gemini AI 2.5 Flash** - Analyse météo avec recherche web temps réel
+- **Gemini TTS** - Synthèse vocale (voix Kore)
 - **Prevision-Meteo.ch** - Données météo montagne
 - **ipapi.co** - Géolocalisation utilisateur (RGPD)
 
@@ -51,9 +51,7 @@ Application web de bulletins météo en temps réel pour la région de l'Oisans 
 
 ## 🚀 Run Locally
 
-Consultez `docs/BOOTSTRAP.md` pour le script d'amorçage macOS et `docs/DOCKER.md` pour l'utilisation / sécurité du conteneur `local-ai-mcp`.
-
-**Prerequisites:** Node.js 18+
+**Prerequisites:** Node.js 18+ et **clé API Gemini obligatoire**
 
 1. **Install dependencies:**
    ```bash
@@ -62,7 +60,8 @@ Consultez `docs/BOOTSTRAP.md` pour le script d'amorçage macOS et `docs/DOCKER.m
 
 2. **Set the `GEMINI_API_KEY` in `.env`:**
    ```bash
-   echo "GEMINI_API_KEY=your_key_here" > .env
+   cp .env.example .env
+   # Éditer .env et ajouter votre clé Gemini
    ```
 
 3. **Run the app:**
@@ -71,6 +70,18 @@ Consultez `docs/BOOTSTRAP.md` pour le script d'amorçage macOS et `docs/DOCKER.m
    ```
 
 4. **Open:** http://localhost:3000
+
+## 🌐 Déploiement Production
+
+📚 **Guide complet:** [docs/vercel-deploy.md](docs/vercel-deploy.md)
+
+**Résumé:**
+1. Se connecter sur [vercel.com](https://vercel.com) avec GitHub
+2. Importer le projet `ThePhoenixAgency/Allo-meteo`
+3. Ajouter `GEMINI_API_KEY` dans Environment Variables
+4. Déployer → C'est en ligne !
+
+Vercel redéploie automatiquement à chaque push sur `main`.
 
 ---
 
@@ -86,9 +97,8 @@ Consultez `docs/BOOTSTRAP.md` pour le script d'amorçage macOS et `docs/DOCKER.m
 ### Données locales (localStorage)
 
 - `allo_meteo_user_profile` - Profil utilisateur (ville, IP, visites)
-- `allo_meteo_model` - Modèle IA sélectionné
-- `lastUserActivity` - Timestamp dernière interaction
-- `lastAIFetch` - Cache requêtes IA
+- `lastUserActivity` - Timestamp dernière interaction (pas d'appel API si inactif)
+- `lastAIFetch` - Cache requêtes IA (30 minutes)
 
 ### Suppression données
 
@@ -102,20 +112,64 @@ document.cookie.split(";").forEach(c => document.cookie = c.trim().split("=")[0]
 
 ## Changelog Récent
 
-### 2026-01-18 - Nettoyage & Améliorations
+### 2026-01-24 - Production Ready: Gemini AI + Auto-deploy + Tests
 
-#### Netoyage et Améliorations du Code
+#### Migration Gemini AI
+- ✅ **Gemini obligatoire** pour météo temps réel (recherche web active)
+- ✅ **GPS précis** : 7 stations de l'Oisans pré-configurées
+- ✅ **Prompt structuré** : format forcé avec validation des sections requises
+- ✅ **Cache 30min** : économie tokens Gemini
+- ✅ **Pas d'appel API** sans interaction utilisateur
+
+#### Tests Unitaires (19 tests - 100% ✅)
+- ✅ Coordonnées GPS validées (toutes stations < 50km du Bourg d'Oisans)
+- ✅ API météo : gestion erreurs 404, 500, timeout
+- ✅ Tokens Gemini : cache, rate limiting 5s
+- ✅ Disponibilité 24/7 sans fenêtre de maintenance
+
+#### CI/CD Auto-Deploy
+- ✅ **GitHub Actions** : build + tests automatiques
+- ✅ **Auto-merge** : si tests passent (sauf Dependabot)
+- ✅ **Vercel deploy** : automatique sur merge main
+
+#### Nettoyage Code
+- ❌ Supprimé package `local-ai-mcp` (non utilisé)
+- 📉 **-1042 lignes** de code supprimées
+
+### 2026-01-18 - Nettoyage & Améliorations
 - Ajout timeout sur requêtes API externes
 - Validation améliorée des réponses API
 - Utilisation `URL()` constructor pour construction d'URLs
 - Optimisation gestion d'erreurs
-- Nettoyage code (suppression duplications)
 
 ---
 
-## Build & Deploy
+## 🗺️ Changer de Lieu
+
+📚 **Guide détaillé:** [docs/vercel-deploy.md](docs/vercel-deploy.md#changer-le-lieu-oisans--autre-région)
+
+**Résumé:** Modifier `index.tsx` (lignes 23-25, 151-157, 159) → Commit + push → Vercel redéploie automatiquement
+
+**Coordonnées GPS:** [Google Maps](https://www.google.com/maps) → Clic droit → "Copier les coordonnées"
+
+---
+
+## 🧪 Tests
+
+📚 **Guide complet:** [docs/prompt-test.md](docs/prompt-test.md)
 
 ```bash
-npm run build  # Production build
+npm test                # 19 tests automatiques
+npm run test:watch      # Mode watch
+npm run test:coverage   # Couverture
+```
+
+**Tests:** GPS, API météo (404/500/timeout), tokens Gemini, format réponses, disponibilité 24/7
+
+## 📦 Build & Deploy
+
+```bash
+npm run build    # Production build
 npm run preview  # Test production locally
+npm run validate # Lint + TypeCheck + Tests + Build
 ```

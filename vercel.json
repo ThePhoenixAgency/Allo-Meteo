@@ -1,0 +1,19 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "installCommand": "npm install",
+  "framework": "vite",
+  "git": {
+    "deploymentEnabled": {
+      "main": true
+    }
+  },
+  "github": {
+    "silent": true,
+    "autoAlias": false,
+    "autoJobCancelation": true
+  },
+  "env": {
+    "GEMINI_API_KEY": "@gemini_api_key"
+  }
+}
