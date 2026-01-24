@@ -190,17 +190,17 @@ Villard-Reculas : X°C
  - Événement 3 (Date + Nom + Lieu)
  
  [LUNE]
- Phase actuelle de la lune (NOM de la phase uniquement, pas d'émoticônes)
+ Phase actuelle de la lune (NOM de la phase uniquement, sans AUCUN emoji, surtout pas de doré/jaune)
  
  INSTRUCTIONS CRITIQUES:
  - Date du jour: ${today}
  - RECHERCHE WEB OBLIGATOIRE :
    1. TRAFIC: "état du trafic Oisans 20km radius", "accidents routes Oisans", "Waze Bourg d'Oisans real time"
-   2. AGENDA: oisans.com/agenda, alpedhuez.com/fr/hiver/agenda, les2alpes.com/hiver/agenda
+   2. AGENDA: oisans.com/agenda, alpedhuez.com/fr/hiver/agenda, les2alpes.com/fr/hiver/agenda
  - NE CHERCHE PAS Villard-Bonnot ni Espace Aragon.
- - Pour le TRAFIC : Ne nomme pas les numéros de départementales sauf si indispensable. Parle en "Axes" et "Directions". Rapporte les incidents de moins de 3 heures.
+ - Pour le TRAFIC : Ne nomme JAMAIS de numéros de routes (pas de RD1091, RD526, etc.). Parle uniquement en "Axes" et "Directions" (ex: Direction Grenoble, Axe stations). Rapporte les incidents de moins de 3 heures.
  - Si tu ne trouves rien de spécial, écris "Trafic fluide sur l'ensemble du secteur Oisans".
- - RESPECTE EXACTEMENT les balises [SECTION]`;
+ - RESPECTE EXACTEMENT le format avec les balises [SECTION]`;
 };
 
 const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: string; sources: any[] }> => {
@@ -209,12 +209,17 @@ const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: stri
   }
 
   try {
-    const genAI = new GoogleGenAI(process.env.API_KEY || '');
+    const genAI = new GoogleGenerativeAI(process.env.API_KEY || '');
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
     const result = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      tools: [{ googleSearch: {} } as any],
+      tools: [
+        {
+          // @ts-ignore - Extension google search
+          googleSearch: {}
+        }
+      ],
     });
 
     const response = await result.response;
@@ -639,7 +644,6 @@ const App = () => {
     if (t.includes('rouge')) return { bg: 'bg-red-500 border-red-400', title: 'DANGER ROUGE', text: 'text-white', icon: 'text-white', pulse: true, label: 'ALERTE MAXIMALE' };
     if (t.includes('orange')) return { bg: 'bg-orange-500 border-orange-400', title: 'VIGILANCE ORANGE', text: 'text-white', icon: 'text-white', pulse: true, label: 'PRUDENCE ACCRUE' };
     if (t.includes('jaune')) return { bg: 'bg-yellow-400 border-yellow-300', title: 'VIGILANCE JAUNE', text: 'text-yellow-950', icon: 'text-yellow-900', pulse: false, label: 'SOYEZ ATTENTIF' };
-    if (t.includes('en cours') || t.includes('analyse')) return { bg: 'bg-blue-50 border-blue-200', title: 'SCRAPING...', text: 'text-blue-600', icon: 'text-blue-400', pulse: true, label: 'WEB SEARCH' };
     return { bg: 'bg-emerald-500 border-emerald-400', title: 'VIGILANCE VERTE', text: 'text-white', icon: 'text-white', pulse: false, label: 'SITUATION CALME' };
   };
 
@@ -647,15 +651,16 @@ const App = () => {
   const seismicStyle = getAlertStyle(risqueSismique);
 
   const routeContent = getSection('ROUTE');
-  const routeStatus = globalLoading ? "RECHERCHE EN COURS..." : (routeContent.match(/statut global\s?:\s?([^.\n\[]+)/i)?.[1]?.trim() || "Trafic Fluide");
-  const routeDetails = globalLoading ? "Scan Waze / Google Maps / Itinisère..." : (routeContent.match(/incidents\s?:\s?([^.\n\[]+)/i)?.[1]?.trim() || "Aucun incident signalé");
+  const routeStatus = globalLoading ? "ANALYSE..." : (routeContent.match(/statut global\s?[:\-]?\s?([^.\n\[]+)/i)?.[1]?.trim() || "Trafic Fluide");
+  const rawDetails = routeContent.match(/incidents\s?[:\-]?\s?([^.\n\[]+)/i)?.[1]?.trim();
+  const routeDetails = globalLoading ? "Scan des axes en cours..." : (rawDetails && !rawDetails.toLowerCase().includes("aucun") ? rawDetails : "");
 
   const getRouteStyle = (status: string) => {
     const s = status.toLowerCase();
-    if (s.includes('recherche en cours') || s.includes('scan')) return { bg: 'bg-blue-600', text: 'text-white', icon: 'text-white', label: 'GROUNDING...', pulse: true };
+    if (s.includes('analyse') || s.includes('scan')) return { bg: 'bg-indigo-600', text: 'text-white', icon: 'text-white', label: 'ANALYSE EN COURS', pulse: true };
     if (s.includes('accidents') || s.includes('fermé') || s.includes('coupée')) return { bg: 'bg-red-600', text: 'text-white', icon: 'text-white', label: 'ALERTE CRITIQUE', pulse: true };
     if (s.includes('ralenti') || s.includes('travaux') || s.includes('hivernal') || s.includes('établi')) return { bg: 'bg-orange-500', text: 'text-white', icon: 'text-white', label: 'TRAFIC PERTURBÉ', pulse: true };
-    return { bg: 'bg-emerald-500', text: 'text-white', icon: 'text-white', label: 'TRAFIC FLUIDE', pulse: false };
+    return { bg: 'bg-emerald-500', text: 'text-white', icon: 'text-white', label: 'SITUATION', pulse: false };
   };
 
   const routeStyle = getRouteStyle(routeStatus);
@@ -899,7 +904,7 @@ const App = () => {
           <div className="flex items-center gap-6">
             <div className="bg-blue-600 p-3 rounded-2xl shadow-xl"><Sun className="text-white w-8 h-8 animate-slow-spin" /></div>
             <div>
-              <h1 className="font-black text-2xl tracking-tighter text-blue-900 leading-none uppercase italic">Allo-Météo</h1>
+              <h1 className="font-black text-5xl tracking-tighter text-blue-900 leading-none uppercase italic">Allo-Météo</h1>
               <span className="text-xs font-bold text-blue-500 tracking-[0.3em] uppercase">Oisans 2026</span>
             </div>
           </div>
@@ -1084,8 +1089,10 @@ const App = () => {
               </div>
               <div className="text-center md:text-left flex-1">
                 <p className={`text-[10px] font-black uppercase tracking-widest mb-1 opacity-80 ${routeStyle.text}`}>{routeStyle.label}</p>
-                <p className={`text-3xl font-black uppercase italic leading-tight ${routeStyle.text}`}>{routeStatus.replace(/statut global\s?:\s?/i, '')}</p>
-                {routeDetails && <p className={`mt-3 font-bold opacity-90 leading-relaxed ${routeStyle.text}`}>{routeDetails.replace(/incidents\s?:\s?/i, '')}</p>}
+                <p className={`text-3xl font-black uppercase italic leading-tight ${routeStyle.text}`}>{routeStatus.replace(/statut global\s?[:\-]?\s?/i, '')}</p>
+                {routeDetails && routeDetails.toLowerCase() !== routeStatus.toLowerCase() && !routeDetails.toLowerCase().includes('fluide') && (
+                  <p className={`mt-3 font-bold opacity-90 leading-relaxed ${routeStyle.text}`}>{routeDetails.replace(/incidents\s?[:\-]?\s?/i, '')}</p>
+                )}
               </div>
             </div>
 
@@ -1100,13 +1107,13 @@ const App = () => {
         </div>
 
         <aside className="lg:col-span-4 space-y-10">
-          <section className="bg-indigo-950 rounded-[3rem] p-10 text-white shadow-2xl relative overflow-hidden text-center flex flex-col items-center justify-center min-h-[350px]">
-            <h3 className="text-5xl font-black uppercase text-indigo-300 mb-8 tracking-tighter text-center w-full">LUNE</h3>
-            <div className="bg-indigo-900/40 p-8 rounded-full border-4 border-indigo-800 shadow-2xl inline-block mb-8">
-              <Moon className="w-24 h-24 text-blue-400 fill-blue-400/20" />
+          <section className="bg-indigo-950 rounded-[3rem] p-10 text-white shadow-2xl relative overflow-hidden text-center flex flex-col items-center justify-center min-h-[300px]">
+            <h3 className="text-4xl font-black uppercase text-indigo-300 mb-6 tracking-tighter w-full">LUNE</h3>
+            <div className="bg-indigo-900/40 p-6 rounded-full border-4 border-indigo-800 shadow-2xl inline-block mb-6 text-blue-400">
+              <Moon className="w-16 h-16 fill-current" />
             </div>
-            <p className="text-2xl font-black uppercase text-white tracking-tighter italic leading-none whitespace-pre-line">
-              {(getSection('LUNE') || getMoonPhase()).replace(/[\u{1F300}-\u{1F3FF}\u{1F400}-\u{1F4FF}\u{1F500}-\u{1F5FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F900}-\u{1F9FF}]/gu, '').trim()}
+            <p className="text-xl font-black uppercase text-white tracking-widest italic leading-none text-center">
+              {(getSection('LUNE') || getMoonPhase()).replace(/[^\p{L}\p{N}\p{P}\p{Z}^$\n]/gu, '').trim()}
             </p>
           </section>
           <section className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
@@ -1125,12 +1132,12 @@ const App = () => {
             </div>
           </section>
           <div onClick={() => window.open(REPO_URL, '_blank')} className="bg-slate-900 p-10 rounded-[3rem] text-white flex justify-between items-center group cursor-pointer active:scale-95 transition-all shadow-2xl border-b-[8px] border-slate-800">
-            <div className="flex items-center gap-5"><Github className="w-10 h-10 text-white" /><div><p className="text-[9px] font-black uppercase text-blue-400 mb-1 tracking-widest">PROJET ALLO-MÉTÉO</p><p className="text-2xl font-black uppercase italic leading-none">Oisans 2026</p></div></div>
+            <div className="flex items-center gap-5"><Github className="w-10 h-10 text-white" /><div><p className="text-[9px] font-black uppercase text-blue-400 mb-1 tracking-widest">ALLO-MÉTÉO</p><p className="text-2xl font-black uppercase italic leading-none">Oisans 2026</p></div></div>
             <ExternalLink className="w-6 h-6 text-white/30 group-hover:text-white" />
           </div>
         </aside>
       </main>
-      <footer className="max-w-7xl mx-auto px-4 mt-20 py-12 border-t border-slate-200 text-center">
+      <footer className="max-w-7xl mx-auto px-4 mt-8 py-8 border-t border-slate-200 text-center">
         <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.5em] mb-4">© 2026 ALLO-MÉTÉO OISANS</p>
         <a
           href="http://ThePhoenixAgency.github.io"
