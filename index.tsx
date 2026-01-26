@@ -50,19 +50,15 @@ const LOCAL_TTS_ENDPOINTS = [
 ];
 
 // Gestion cookies RGPD
-const setCookie = (name: string, value: string, days: number = COOKIE_EXPIRY_DAYS) => {
-  const d = new Date();
-  d.setTime(d.getTime() + days * 24 * 60 * 60 * 1000);
-  document.cookie = `${name}=${value};expires=${d.toUTCString()};path=/;SameSite=Strict`;
+const setCookie = (name: string, value: string) => {
+  const expires = new Date();
+  expires.setTime(expires.getTime() + (COOKIE_EXPIRY_DAYS * 24 * 60 * 60 * 1000));
+  document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/;SameSite=Lax`;
 };
 
 const getCookie = (name: string): string | null => {
   const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
   return match ? match[2] : null;
-};
-
-const deleteCookie = (name: string) => {
-  document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
 };
 
 type UserProfile = {
@@ -194,14 +190,17 @@ Villard-Reculas : X°C
  Phase actuelle de la lune (NOM de la phase uniquement, sans AUCUN emoji, surtout pas de doré/jaune)
  
  INSTRUCTIONS CRITIQUES:
- - Date du jour: ${today}
- - RECHERCHE WEB OBLIGATOIRE :
-   1. TRAFIC: "état du trafic OISANS 20km radius", "accidents routes OISANS", "Waze Bourg d'Oisans real time"
-   2. AGENDA: OISANS.com/agenda, alpedhuez.com/fr/hiver/agenda, les2alpes.com/fr/hiver/agenda
- - NE CHERCHE PAS Villard-Bonnot ni Espace Aragon.
- - Pour le TRAFIC : Ne nomme JAMAIS de numéros de routes (pas de RD1091, RD526, etc.). Parle uniquement en "Axes" et "Directions" (ex: Direction Grenoble, Axe stations). Rapporte les incidents de moins de 3 heures.
- - Si tu ne trouves rien de spécial, écris "Trafic fluide sur l'ensemble du secteur OISANS".
- - RESPECTE EXACTEMENT le format avec les balises [SECTION]`;
+  - Date du jour: ${today}
+  - RECHERCHE WEB OBLIGATOIRE :
+    1. TEMPÉRATURES: "météo temps réel Bourg d'Oisans", "température actuelle Alpe d'Huez", "vrai température Les Deux Alpes aujourd'hui", "météo Isère temps réel"
+    2. TRAFIC: "état du trafic OISANS 20km radius", "accidents routes OISANS", "Waze Bourg d'Oisans real time"
+    3. AGENDA: OISANS.com/agenda, alpedhuez.com/fr/hiver/agenda, les2alpes.com/fr/hiver/agenda
+  - NE CHERCHE PAS Villard-Bonnot ni Espace Aragon.
+  - Pour la MÉTÉO : Sois TRES précis sur les températures. Si une inversion thermique est détectée (plus chaud en station qu'au Bourg d'Oisans), signale-le.
+  - Pour le TRAFIC : Ne nomme JAMAIS de numéros de routes (pas de RD1091, RD526, etc.). Parle uniquement en "Axes" et "Directions" (ex: Direction Grenoble, Axe stations). Rapporte les incidents de moins de 3 heures.
+  - Si tu ne trouves rien de spécial, écris "Trafic fluide sur l'ensemble du secteur OISANS".
+  - Rappelle-toi : écris TOUJOURS "OISANS" en majuscules dans tes réponses.
+  - RESPECTE EXACTEMENT le format avec les balises [SECTION]`;
 };
 
 const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: string; sources: any[] }> => {
@@ -210,7 +209,7 @@ const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: stri
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY || '' });
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.0-flash-exp',
@@ -221,13 +220,16 @@ const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: stri
     });
 
     const text = response.text || '';
+    if (!text) {
+      console.warn('⚠️ Gemini a renvoyé un texte vide');
+    }
 
     return {
       text,
       sources: (response as any).candidates?.[0]?.groundingMetadata?.groundingChunks || [],
     };
   } catch (error: any) {
-    console.error('❌ Erreur Gemini API:', error);
+    console.error('❌ Erreur Gemini API Text:', error);
     throw new Error(`Gemini API erreur: ${error.message || 'Erreur inconnue'}`);
   }
 };
@@ -270,10 +272,10 @@ const fetchBulletinAudioWithFallback = async (prompt: string) => {
   if (!prompt) return { audio: null };
   const t0 = performance.now();
 
-  // Priorité 1: Gemini TTS (production)
   if (hasGeminiKey) {
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+      console.info('🎙️ Génération de l\'audio avec Gemini...');
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY || '' });
       const response = await ai.models.generateContent({
         model: 'gemini-2.0-flash-exp',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -283,14 +285,18 @@ const fetchBulletinAudioWithFallback = async (prompt: string) => {
         },
       });
 
-      const audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
+      const audioPart = response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+      const audio = audioPart?.inlineData?.data || null;
+
       if (audio) {
         const perf = { latencyMs: Math.round(performance.now() - t0), model: 'gemini-tts' };
+        console.info('✅ Audio bulletin généré avec succès');
         return { audio, perf };
+      } else {
+        console.warn('⚠️ Aucun audio trouvé dans la réponse Gemini');
       }
     } catch (error) {
       console.warn('❌ Gemini TTS erreur:', error);
-      // Continue vers fallback local
     }
   }
 
@@ -371,40 +377,52 @@ const App = () => {
     try {
       setManualLoading(true);
 
-      // 1. Fetch Bourg d'Oisans (Main)
-      const mainUrl = `https://www.prevision-meteo.ch/services/json/lat=${LOCATION_COORDS.lat}lng=${LOCATION_COORDS.lon}`;
-      const mainRes = await fetch(mainUrl);
-      const mainData = await mainRes.json();
-      if (mainData.current_condition) {
-        const current = mainData.current_condition;
-        const windDirMap: { [key: string]: number } = {
-          'N': 0, 'NNE': 22.5, 'NE': 45, 'ENE': 67.5,
-          'E': 90, 'ESE': 112.5, 'SE': 135, 'SSE': 157.5,
-          'S': 180, 'SSW': 202.5, 'SW': 225, 'WSW': 247.5,
-          'W': 270, 'WNW': 292.5, 'NW': 315, 'NNW': 337.5
-        };
-        setManualWeather({
-          temperature: parseFloat(current.tmp),
-          windspeed: parseFloat(current.wnd_spd),
-          winddirection: windDirMap[current.wnd_dir] ?? 0,
-          humidity: parseFloat(current.humidity),
-          pressure: parseFloat(current.pressure),
-          precipitation: 0,
-          timestamp: new Date().toISOString(),
-        });
+      // 1. Fetch Bourg d'OISANS (Primary: Open-Meteo, Fallback: Prevision-Meteo)
+      try {
+        const openMeteoUrl = `https://api.open-meteo.com/v1/forecast?latitude=${LOCATION_COORDS.lat}&longitude=${LOCATION_COORDS.lon}&current=temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,wind_direction_10m&timezone=auto`;
+        const res = await fetch(openMeteoUrl);
+        const data = await res.json();
+        if (data.current) {
+          setManualWeather({
+            temperature: data.current.temperature_2m,
+            windspeed: data.current.wind_speed_10m,
+            winddirection: data.current.wind_direction_10m,
+            humidity: data.current.relative_humidity_2m,
+            pressure: data.current.surface_pressure,
+            precipitation: 0,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (e) {
+        console.warn('Open-Meteo failed, falling back to Prevision-Meteo');
+        const mainUrl = `https://www.prevision-meteo.ch/services/json/lat=${LOCATION_COORDS.lat}&lng=${LOCATION_COORDS.lon}`;
+        const mainRes = await fetch(mainUrl);
+        const mainData = await mainRes.json();
+        if (mainData.current_condition) {
+          const current = mainData.current_condition;
+          setManualWeather({
+            temperature: parseFloat(current.tmp),
+            windspeed: parseFloat(current.wnd_spd),
+            winddirection: 0,
+            humidity: parseFloat(current.humidity),
+            pressure: parseFloat(current.pressure),
+            precipitation: 0,
+            timestamp: new Date().toISOString(),
+          });
+        }
       }
 
-      // 2. Fetch All Other Stations
+      // 2. Fetch All Other Stations (Open-Meteo for speed and accuracy)
       const stationsResults: { [key: string]: string } = {};
       for (const [name, coords] of Object.entries(STATIONS_COORDS)) {
         try {
-          const res = await fetch(`https://www.prevision-meteo.ch/services/json/lat=${coords.lat}lng=${coords.lon}`);
+          const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}&current=temperature_2m&timezone=auto`);
           const data = await res.json();
-          if (data.current_condition) {
-            stationsResults[name] = `${data.current_condition.tmp}°C`;
+          if (data.current) {
+            stationsResults[name] = `${data.current.temperature_2m.toFixed(1)}°C`;
           }
         } catch (e) {
-          console.warn(`Failed to fetch weather for ${name}`);
+          stationsResults[name] = "--°C";
         }
       }
       setStationWeather(stationsResults);
@@ -592,16 +610,22 @@ const App = () => {
   const playWeatherBulletin = async () => {
     markUserActivity(); // Interaction utilisateur
     if (isPlaying) { stopAudio(); return; }
-    const now = Date.now();
-    if (now - (ttsCooldownRef.current || 0) < TTS_COOLDOWN_MS) {
-      return;
-    }
+
     setLoading(true);
     try {
+      if (!expertData?.text) {
+        console.info('🔄 Expert data missing, fetching before audio...');
+        const prompt = buildExpertPrompt();
+        const res = await fetchExpertTextWithFallback(prompt);
+        setExpertData({ text: res.text, sources: res.sources });
+      }
+
+      const currentExpertText = expertData?.text || (await fetchExpertTextWithFallback(buildExpertPrompt())).text;
+
       const promptText = `Tu es l'assistant Allo-Météo. INTERDICTION ABSOLUE : ne dis pas "Phoenix Project" ni "réel". 
       CONSIGNE PHONÉTIQUE : Prononce TRÈS DISTINCTEMENT les terminaisons. 
       Dis clairement : LES DEUZZZZ ALPEs, BOUR D'OISAN, OZZZZ EN OISAN, ALPE D'HUEZZZZ.
-      Données : ${expertData?.text}`;
+      Données : ${currentExpertText}`;
       const { audio: base64Audio } = await fetchBulletinAudioWithFallback(promptText);
       if (!base64Audio) { setLoading(false); return; }
 
