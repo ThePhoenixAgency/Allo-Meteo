@@ -9,7 +9,7 @@ import {
   TrendingUp, ExternalLink,
   Activity, X,
   Siren,
-  MoonStar, CalendarDays, Sparkles,
+  CalendarDays, Sparkles,
   Ticket, Github, User,
   Waves as FloodIcon, Zap as SeismicIcon, Cookie, Shield
 } from 'lucide-react';
@@ -20,7 +20,6 @@ import { GoogleGenAI } from "@google/genai";
  * @description Bulletin email complété, Espace Aragon exclu, Inversion thermique maintenue.
  */
 
-const LOCATION = "Le Bourg d'Oisans";
 const REPO_URL = "https://github.com/ThePhoenixAgency/Allo-meteo";
 
 // Coordonnées GPS pour Prevision-Meteo.ch API
@@ -40,7 +39,6 @@ const AUTO_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 heures (2 fois par j
 const USER_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - considère l'utilisateur inactif après ce délai
 const COOKIE_EXPIRY_DAYS = 395; // 13 mois (conformité RGPD max)
 const TEXT_COOLDOWN_MS = 5000;
-const TTS_COOLDOWN_MS = 5000;
 
 // Fallback TTS endpoints
 const LOCAL_TTS_ENDPOINTS = [
@@ -80,6 +78,7 @@ type ManualWeather = {
   humidity?: number | null;
   pressure?: number | null;
   precipitation?: number | null;
+  snowfall?: number | null;
   timestamp: string;
 };
 
@@ -192,8 +191,8 @@ Villard-Reculas : X°C
  INSTRUCTIONS CRITIQUES:
   - Date du jour: ${today}
   - RECHERCHE WEB OBLIGATOIRE :
-    1. TEMPÉRATURES: "météo temps réel Bourg d'Oisans", "température actuelle Alpe d'Huez", "vrai température Les Deux Alpes aujourd'hui", "météo Isère temps réel"
-    2. TRAFIC: "état du trafic OISANS 20km radius", "accidents routes OISANS", "Waze Bourg d'Oisans real time"
+    1. TEMPÉRATURES: "météo temps réel Bourg d'Oisans", "température actuelle Alpe d'Huez", "vrai température Les Deux Alpes aujourd'hui", "météo Isère temps réel", "Météo Oisans Facebook expert"
+    2. TRAFIC: "état du trafic OISANS 20km radius", "accidents routes OISANS", "Waze Bourg d'Oisans real time", "Itinisère Oisans bouchons"
     3. AGENDA: OISANS.com/agenda, alpedhuez.com/fr/hiver/agenda, les2alpes.com/fr/hiver/agenda
   - NE CHERCHE PAS Villard-Bonnot ni Espace Aragon.
   - Pour la MÉTÉO : Sois TRES précis sur les températures. Si une inversion thermique est détectée (plus chaud en station qu'au Bourg d'Oisans), signale-le.
@@ -335,6 +334,11 @@ const App = () => {
   const [showCookieBanner, setShowCookieBanner] = useState<boolean>(false);
   const [showCookieSettings, setShowCookieSettings] = useState<boolean>(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  useEffect(() => {
+    if (userProfile) {
+      console.info('👤 Profil utilisateur chargé:', userProfile.city);
+    }
+  }, [userProfile]);
   const [cookiePreferences, setCookiePreferences] = useState({
     essential: true, // Toujours true, non modifiable
     functional: false,
@@ -354,7 +358,7 @@ const App = () => {
       const prompt = buildExpertPrompt();
       const res = await fetchExpertTextWithFallback(prompt);
       const rawText = res.text || '';
-      const cleanText = rawText.replace(/[\*#_>`~]/g, '');
+      const cleanText = rawText.replace(/[*#_>`~]/g, '');
       setExpertData({ text: cleanText, sources: res.sources });
       localStorage.setItem('lastAIFetch', Date.now().toString());
     } catch (error) {
@@ -379,7 +383,7 @@ const App = () => {
 
       // 1. Fetch Bourg d'OISANS (Primary: Open-Meteo, Fallback: Prevision-Meteo)
       try {
-        const openMeteoUrl = `https://api.open-meteo.com/v1/forecast?latitude=${LOCATION_COORDS.lat}&longitude=${LOCATION_COORDS.lon}&current=temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,wind_direction_10m&timezone=auto`;
+        const openMeteoUrl = `https://api.open-meteo.com/v1/forecast?latitude=${LOCATION_COORDS.lat}&longitude=${LOCATION_COORDS.lon}&current=temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,wind_direction_10m,precipitation,snowfall&timezone=auto`;
         const res = await fetch(openMeteoUrl);
         const data = await res.json();
         if (data.current) {
@@ -389,7 +393,8 @@ const App = () => {
             winddirection: data.current.wind_direction_10m,
             humidity: data.current.relative_humidity_2m,
             pressure: data.current.surface_pressure,
-            precipitation: 0,
+            precipitation: data.current.precipitation,
+            snowfall: data.current.snowfall,
             timestamp: new Date().toISOString(),
           });
         }
@@ -406,7 +411,8 @@ const App = () => {
             winddirection: 0,
             humidity: parseFloat(current.humidity),
             pressure: parseFloat(current.pressure),
-            precipitation: 0,
+            precipitation: current.precip ? parseFloat(current.precip) : 0,
+            snowfall: 0, // Pas dispo directement sur Prevision-Meteo
             timestamp: new Date().toISOString(),
           });
         }
@@ -603,7 +609,6 @@ const App = () => {
     setIsPlaying(false);
     if (audioContextRef.current) {
       audioContextRef.current.close().catch(() => { });
-      audioContextRef.current = null;
     }
   };
 
@@ -654,10 +659,10 @@ const App = () => {
   // États: Chargement initial, IA a répondu, IA indisponible
   const isLoading = !hasAnyAIData && globalLoading;
   const risqueSismique = hasRisquesData
-    ? (risquesText.match(/sismique\s?[:\-]?\s?([^,.\n]+)/i)?.[1] || "Aucune alerte en cours")
+    ? (risquesText.match(/sismique\s?[:-]?\s?([^,.\n]+)/i)?.[1] || "Aucune alerte en cours")
     : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte en cours" : "IA indisponible"));
   const risqueCrues = hasRisquesData
-    ? (risquesText.match(/crues\s?[:\-]?\s?([^,.\n\[]+)/i)?.[1] || "Donnée indisponible")
+    ? (risquesText.match(/crues\s?[:-]?\s?([^,.\n[]+)/i)?.[1] || "Donnée indisponible")
     : (globalLoading ? "RECHERCHE EN COURS..." : (hasAnyAIData ? "Vigilance Verte" : "IA Indisponible"));
 
   const getAlertStyle = (text: string) => {
@@ -672,8 +677,8 @@ const App = () => {
   const seismicStyle = getAlertStyle(risqueSismique);
 
   const routeContent = getSection('ROUTE');
-  const routeStatus = globalLoading ? "ANALYSE..." : (routeContent.match(/statut global\s?[:\-]?\s?([^.\n\[]+)/i)?.[1]?.trim() || "Trafic Fluide");
-  const rawDetails = routeContent.match(/incidents\s?[:\-]?\s?([^.\n\[]+)/i)?.[1]?.trim();
+  const routeStatus = globalLoading ? "ANALYSE..." : (routeContent.match(/statut global\s?[:\-]?\s?([^.\n[]+)/i)?.[1]?.trim() || "Trafic Fluide");
+  const rawDetails = routeContent.match(/incidents\s?[:\-]?\s?([^.\n[]+)/i)?.[1]?.trim();
   const routeDetails = globalLoading ? "Scan des axes en cours..." : (rawDetails && !rawDetails.toLowerCase().includes("aucun") ? rawDetails : "");
 
   const getRouteStyle = (status: string) => {
@@ -696,6 +701,7 @@ const App = () => {
   const currentTemp = manualTemperature || meteoText.match(/(\-?\d+)\s?°/)?.[1] || "...";
   const humidity = (manualHumidityValue !== null ? Math.round(manualHumidityValue).toString() : meteoText.match(/(\d+)\s?%/)?.[1] || "...") + "%";
   const rain = (manualRainValue !== null ? manualRainValue.toFixed(1) : meteoText.match(/(\d+[,.]?\d*)\s?mm/)?.[1] || "...") + " mm";
+  const snow = (manualWeather?.snowfall !== undefined && manualWeather?.snowfall !== null ? manualWeather.snowfall.toFixed(1) : (meteoText.match(/(\d+[,.]?\d*)\s?cm/i)?.[1] || "0.0")) + " cm";
   const pressure = (manualPressureValue !== null ? manualPressureValue.toFixed(0) : meteoText.match(/(\d+)\s?hPa/)?.[1] || "...") + " hPa";
 
   const hasInversionText = inversion.toLowerCase().includes("oui") || inversion.toLowerCase().includes("active") || inversion.toLowerCase().includes("présente") || inversion.toLowerCase().includes("yes");
@@ -708,24 +714,21 @@ const App = () => {
     const month = now.getMonth() + 1;
     const day = now.getDate();
 
-    // Algorithme simplifié pour calculer la phase de lune
-    let c = 0, e = 0, jd = 0, b = 0;
+    // Algorithme de calculer la phase de lune
+    let jdFinal = 0;
     if (month < 3) {
-      const yearAdjusted = year - 1;
-      const monthAdjusted = month + 12;
-      c = Math.floor(yearAdjusted / 100);
-      e = c / 4;
-      jd = 365.25 * (yearAdjusted + 4716);
-      b = Math.floor(30.6001 * (monthAdjusted + 1));
+      const y = year - 1;
+      const m = month + 12;
+      const a = Math.floor(y / 100);
+      const bComp = 2 - a + Math.floor(a / 4);
+      jdFinal = Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + day + bComp - 1524.5;
     } else {
-      c = Math.floor(year / 100);
-      e = Math.floor(c / 4);
-      jd = Math.floor(365.25 * (year + 4716));
-      b = Math.floor(30.6001 * (month + 1));
+      const a = Math.floor(year / 100);
+      const bComp = 2 - a + Math.floor(a / 4);
+      jdFinal = Math.floor(365.25 * (year + 4716)) + Math.floor(30.6001 * (month + 1)) + day + bComp - 1524.5;
     }
 
-    const fullJD = jd + b + day - 1524.5;
-    const daysSinceNew = (fullJD - 2451550.1) % 29.53059;
+    const daysSinceNew = (jdFinal - 2451550.1) % 29.53059;
     const phase = daysSinceNew / 29.53059;
 
     if (phase < 0.0625) return "🌑 Nouvelle Lune";
@@ -783,7 +786,7 @@ const App = () => {
                       <Activity className="w-4 h-4 text-purple-400" />
                       <strong className="text-purple-400">ANALYTIQUES</strong>
                     </div>
-                    <p className="text-slate-300">Statistiques d'usage (désactivé actuellement)</p>
+                    <p className="text-slate-300">Statistiques d&apos;usage (désactivé actuellement)</p>
                   </div>
                 </div>
               </div>
@@ -862,7 +865,7 @@ const App = () => {
                     <User className="w-6 h-6 text-blue-400" />
                     <div>
                       <h3 className="font-black text-white uppercase">Cookies Fonctionnels</h3>
-                      <p className="text-xs text-slate-400">Améliore l'expérience</p>
+                      <p className="text-xs text-slate-400">Améliore l&apos;expérience</p>
                     </div>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
@@ -897,7 +900,7 @@ const App = () => {
                   <div className="bg-slate-700 px-4 py-2 rounded-full text-xs font-black">DÉSACTIVÉ</div>
                 </div>
                 <p className="text-sm text-slate-300">
-                  Collectent des statistiques anonymes sur l'utilisation du site (non utilisé actuellement).
+                  Collectent des statistiques anonymes sur l&apos;utilisation du site (non utilisé actuellement).
                 </p>
               </div>
             </div>
@@ -992,7 +995,7 @@ const App = () => {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-12">
                 {[
                   { icon: CloudRain, label: 'PRÉCIP.', val: rain },
-                  { icon: CloudSnow, label: 'NEIGE', val: (meteoText.match(/(\d+)\s?cm/i)?.[1] || "0.0") + ' cm' },
+                  { icon: CloudSnow, label: 'NEIGE', val: snow },
                   { icon: Droplets, label: 'HUMIDITÉ', val: humidity },
                   { icon: Gauge, label: 'PRESSION', val: pressure }
                 ].map((item, i) => (
@@ -1081,7 +1084,7 @@ const App = () => {
                       <div>
                         <p className="text-xl font-bold text-slate-800 leading-snug">{event.replace(/^- /, '').trim()}</p>
                         <div className="flex items-center gap-3 mt-3">
-                          <span className="bg-indigo-600/10 text-indigo-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Aujourd'hui</span>
+                          <span className="bg-indigo-600/10 text-indigo-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Aujourd&apos;hui</span>
                         </div>
                       </div>
                     </div>
@@ -1100,7 +1103,7 @@ const App = () => {
             </div>
             <div className="flex items-center gap-5 mb-8">
               <h3 className="text-2xl font-black text-slate-900 uppercase flex items-center gap-4">
-                <Siren className="w-10 h-10 text-orange-500" /> L'INFO TRAFIC OISANS
+                <Siren className="w-10 h-10 text-orange-500" /> L&apos;INFO TRAFIC OISANS
               </h3>
             </div>
 
@@ -1110,9 +1113,9 @@ const App = () => {
               </div>
               <div className="text-center md:text-left flex-1">
                 <p className={`text-[10px] font-black uppercase tracking-widest mb-1 opacity-80 ${routeStyle.text}`}>{routeStyle.label}</p>
-                <p className={`text-3xl font-black uppercase italic leading-tight ${routeStyle.text}`}>{routeStatus.replace(/statut global\s?[:\-]?\s?/i, '')}</p>
+                <p className={`text-3xl font-black uppercase italic leading-tight ${routeStyle.text}`}>{routeStatus.replace(/statut global\s?[:-]?\s?/i, '')}</p>
                 {routeDetails && routeDetails.toLowerCase() !== routeStatus.toLowerCase() && !routeDetails.toLowerCase().includes('fluide') && (
-                  <p className={`mt-3 font-bold opacity-90 leading-relaxed ${routeStyle.text}`}>{routeDetails.replace(/incidents\s?[:\-]?\s?/i, '')}</p>
+                  <p className={`mt-3 font-bold opacity-90 leading-relaxed ${routeStyle.text}`}>{routeDetails.replace(/incidents\s?[:-]?\s?/i, '')}</p>
                 )}
               </div>
             </div>
