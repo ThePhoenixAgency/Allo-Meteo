@@ -33,7 +33,7 @@ jobs:
           npm run format || true
 
       - name: Commit & push fixes
-        uses: stefanzweifel/git-auto-commit-action@v4
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "chore: autofix lint/format [auto]"
           file_pattern: "**/*.{js,ts,tsx,css,json,md}" 
