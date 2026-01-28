@@ -17,10 +17,10 @@ jobs:
   auto-fix:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
 
@@ -33,7 +33,7 @@ jobs:
           npm run format || true
 
       - name: Commit & push fixes
-        uses: stefanzweifel/git-auto-commit-action@v4
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "chore: autofix lint/format [auto]"
           file_pattern: "**/*.{js,ts,tsx,css,json,md}" 

@@ -23,7 +23,7 @@ jobs:
       API_KEY: ${{ secrets.GEMINI_API_KEY }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check GEMINI secret presence (non-fatal)
         # This step is intentionally non-fatal and only prints whether the secret is available.
@@ -31,7 +31,7 @@ jobs:
           node -e "console.log(Boolean(process.env.API_KEY) ? 'GEMINI OK' : 'GEMINI MISSING')"
 
       - name: Use Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
 
@@ -51,7 +51,7 @@ jobs:
           echo "No tests configured" && exit 0
 
       - name: Upload local-ai-mcp artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: local-ai-mcp-pack
           path: packages/local-ai-mcp/dist/*.tgz
@@ -60,7 +60,7 @@ jobs:
         run: echo "Built at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > build-info.txt
 
       - name: Upload build info
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: build-info
           path: build-info.txt
