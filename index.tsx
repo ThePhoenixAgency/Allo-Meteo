@@ -1,56 +1,75 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  Sun, CloudRain, CloudSnow,
-  Mountain, Volume2,
-  Droplets, Loader2, Square,
-  Gauge, Moon,
-  Mail, CheckCircle2,
-  TrendingUp, ExternalLink,
-  Activity, X,
+  Sun,
+  CloudRain,
+  CloudSnow,
+  Mountain,
+  Volume2,
+  Droplets,
+  Loader2,
+  Square,
+  Gauge,
+  Moon,
+  Mail,
+  CheckCircle2,
+  TrendingUp,
+  ExternalLink,
+  Activity,
+  X,
   Siren,
-  CalendarDays, Sparkles,
-  Ticket, Github, User,
-  Waves as FloodIcon, Zap as SeismicIcon, Cookie, Shield
+  CalendarDays,
+  Sparkles,
+  Ticket,
+  Github,
+  User,
+  Waves as FloodIcon,
+  Zap as SeismicIcon,
+  Shield,
 } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import type { Tool } from '@google/generative-ai';
 
 /**
- * @file Allo-Météo & Route Expert - Version 3.4.0
- * @description Bulletin email complété, Espace Aragon exclu, Inversion thermique maintenue.
+ * @file Allo-Meteo Meteo - Version 1.1.2
+ * @description Bulletin meteo intelligent avec Gemini 2.0 Flash.
  */
 
-const REPO_URL = "https://github.com/ThePhoenixAgency/Allo-meteo";
+const REPO_URL = 'https://github.com/EthanThePhoenix38/Allo-Meteo';
 
 // Coordonnées GPS pour Prevision-Meteo.ch API
-const LOCATION_COORDS = { lat: 45.0520, lon: 6.0301 }; // Le Bourg-d'Oisans
+const LOCATION_COORDS = { lat: 45.052, lon: 6.0301 }; // Le Bourg-d'Oisans
 
 // Stations de ski de l'Oisans (coordonnées GPS pour météo)
 const STATIONS_COORDS = {
   "Alpe d'Huez": { lat: 45.0926, lon: 6.0683 },
-  "Les 2 Alpes": { lat: 45.0043, lon: 6.1197 },
-  "Vaujany": { lat: 45.1576, lon: 6.0768 },
-  "Oz-en-Oisans": { lat: 45.2167, lon: 6.0667 },
-  "Saint-Christophe-en-Oisans": { lat: 44.9581, lon: 6.1767 },
-  "Villard-Reculas": { lat: 45.0942, lon: 6.0309 }
+  'Les 2 Alpes': { lat: 45.0043, lon: 6.1197 },
+  Vaujany: { lat: 45.1576, lon: 6.0768 },
+  'Oz-en-Oisans': { lat: 45.2167, lon: 6.0667 },
+  'Saint-Christophe-en-Oisans': { lat: 44.9581, lon: 6.1767 },
+  'Villard-Reculas': { lat: 45.0942, lon: 6.0309 },
 };
-const hasGeminiKey = Boolean(process.env.API_KEY || process.env.GEMINI_API_KEY);
+const getGeminiKey = (): string => {
+  const env = (import.meta as unknown as { env: { VITE_GEMINI_API_KEY?: string } }).env;
+  return env?.VITE_GEMINI_API_KEY || '';
+};
+const hasGeminiKey = Boolean(getGeminiKey());
+/** API Keys - Configurées dans GitHub Secrets ou environnement shell */
+const OPENWEATHER_API_KEY = ''; // Désactivé si non fourni par Vite define
+const WEATHERAPI_KEY = ''; // Désactivé si non fourni par Vite define
+const hasOpenWeatherKey = Boolean(OPENWEATHER_API_KEY);
+const hasWeatherApiKey = Boolean(WEATHERAPI_KEY);
 const AUTO_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 heures (2 fois par jour)
 const USER_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes - considère l'utilisateur inactif après ce délai
 const COOKIE_EXPIRY_DAYS = 395; // 13 mois (conformité RGPD max)
 const TEXT_COOLDOWN_MS = 5000;
 
-// Fallback TTS endpoints
-const LOCAL_TTS_ENDPOINTS = [
-  '/v1/audio/speech',
-  '/tts',
-  '/api/tts',
-];
+// Text and TTS cooldowns
 
 // Gestion cookies RGPD
 const setCookie = (name: string, value: string) => {
   const expires = new Date();
-  expires.setTime(expires.getTime() + (COOKIE_EXPIRY_DAYS * 24 * 60 * 60 * 1000));
+  expires.setTime(expires.getTime() + COOKIE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
   document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/;SameSite=Lax`;
 };
 
@@ -68,8 +87,18 @@ type UserProfile = {
   lon?: number;
   visitCount: number;
   lastVisit: string;
-  preferences?: any;
+  preferences?: Record<string, unknown>;
 };
+
+interface GroundingSource {
+  url: string;
+  displayUri: string;
+}
+
+interface AISources {
+  text: string;
+  sources: GroundingSource[];
+}
 
 type ManualWeather = {
   temperature: number;
@@ -100,22 +129,404 @@ const getHardcodedSaint = () => {
   const day = date.getDate();
   const month = date.getMonth();
   const saints: { [key: number]: string[] } = {
-    0: ["Marie", "Basile", "Geneviève", "Odilon", "Édouard", "Mélaine", "Raymond", "Lucien", "Alix", "Guillaume", "Paulin", "Tatiana", "Yvette", "Nina", "Rémi", "Marcel", "Roseline", "Prisca", "Marius", "Sébastien", "Agnès", "Vincent", "Barnard", "Fr. de Sales", "Conv. de Paul", "Paule", "Angèle", "Thomas d'A.", "Gildas", "Martine", "Marcelle"],
-    1: ["Ella", "Présentation", "Blaise", "Véronique", "Agathe", "Gaston", "Eugénie", "Jacqueline", "Apolline", "Arnaud", "N.-D. Lourdes", "Félix", "Béatrice", "Valentin", "Claude", "Julienne", "Alexis", "Bernadette", "Gabin", "Aimée", "Pierre-Dam.", "Isabelle", "Lazare", "Modeste", "Roméo", "Nestor", "Honorine", "Romain", "Auguste"],
-    2: ["Aubin", "Charles le B.", "Guénolé", "Casimir", "Olive", "Colette", "Félicité", "Jean de Dieu", "Françoise", "Vivien", "Rosine", "Justine", "Rodrigue", "Mathilde", "Louise", "Bénédicte", "Patrice", "Cyrille", "Joseph", "Herbert", "Clémence", "Léa", "Victorien", "Catherine", "Humbert", "Larissa", "Habib", "Gontran", "Gwladys", "Amédée", "Benjamin"],
-    3: ["Hugues", "Sandrine", "Richard", "Isidore", "Irène", "Marcellin", "Jean-B. de la S.", "Julie", "Gautier", "Fulbert", "Stanislas", "Jules", "Ida", "Maxime", "Paterne", "Benoît-Joseph", "Anicet", "Parfait", "Emma", "Odette", "Anselme", "Alexandre", "Georges", "Fidèle", "Marc", "Alida", "Zita", "Valérie", "Catherine de S.", "Robert"],
-    4: ["Jérémie", "Boris", "Philippe", "Sylvain", "Judith", "Prudence", "Gisèle", "Pacôme", "Solange", "Estelle", "Achille", "Rolande", "Matthias", "Denise", "Honoré", "Pascal", "Éric", "Yves", "Bernardin", "Constantin", "Émile", "Didier", "Donatien", "Sophie", "Bérenger", "Augustin", "Germain", "Aymar", "Ferdinand", "Visitation"],
-    5: ["Justin", "Blandine", "Kévin", "Clotilde", "Igor", "Norbert", "Gilbert", "Médard", "Diane", "Landry", "Barnabé", "Guy", "Antoine de P.", "Élisée", "Germaine", "Jean-Fr. Régis", "Hervé", "Léonce", "Romuald", "Silvère", "Été", "Alban", "Audrey", "Jean-Baptiste", "Prosper", "Anthelme", "Fernand", "Irénée", "Pierre-Paul", "Martial"],
-    6: ["Thierry", "Martinien", "Thomas", "Florent", "Antoine", "Mariette", "Raoul", "Thibault", "Amandine", "Ulrich", "Benoît", "Olivier", "Henri", "Camille", "Donald", "N.-D. Mt-Carmel", "Charlotte", "Frédéric", "Arsène", "Marina", "Victor", "Marie-Mad.", "Brigitte", "Christine", "Jacques", "Anne", "Nathalie", "Samson", "Marthe", "Juliette", "Ignace de L."],
-    7: ["Alphonse", "Julien Eymard", "Lydie", "Jean-M. Vianney", "Abel", "Transfiguration", "Gaétan", "Dominique", "Amour", "Laurent", "Claire", "Clarisse", "Hippolyte", "Evrard", "Assomption", "Armel", "Hyacinthe", "Hélène", "Jean Eudes", "Bernard", "Christophe", "Fabrice", "Rose de Lima", "Barthélemy", "Louis", "Natacha", "Monique", "Augustin", "Sabine", "Fiacre", "Aristide"],
-    8: ["Gilles", "Ingrid", "Grégoire", "Rosalie", "Raïssa", "Bertrand", "Reine", "Nativité", "Alain", "Inès", "Adelphe", "Apollinaire", "Aimé", "Exaltation", "Roland", "Édith", "Renaud", "Nadège", "Émilie", "Davy", "Matthieu", "Maurice", "Constant", "Thecle", "Hermann", "Côme", "Vincent de P.", "Venceslas", "Gabriel", "Jérôme"],
-    9: ["Thérèse de l'E.", "Léger", "Gérard", "Fr. d'Assise", "Fleur", "Bruno", "Serge", "Pélagie", "Denis", "Ghislain", "Firmin", "Wilfried", "Géraud", "Juste", "Thérèse d'A.", "Edwige", "Baudouin", "Luc", "René", "Adeline", "Céline", "Élodie", "Jean de Capistran", "Florentin", "Crépin", "Dimitri", "Émeline", "Jude", "Narcisse", "Bienvenue", "Quentin"],
-    10: ["Toussaint", "Défunts", "Hubert", "Charles", "Sylvie", "Bertille", "Carine", "Geoffroy", "Théodore", "Léon", "Armistice", "Christian", "Brice", "Sidoine", "Albert", "Marguerite", "Élisabeth", "Aude", "Tanguy", "Edmond", "Prés. Marie", "Cécile", "Clément", "Flora", "Catherine", "Delphine", "Séverin", "Jacques de la M.", "Saturnin", "André"],
-    11: ["Florence", "Viviane", "François-Xavier", "Barbara", "Gérald", "Nicolas", "Ambroise", "Immaculée Conc.", "Pierre Fourier", "Romaric", "Daniel", "Jeanne-Fr. de Ch.", "Lucie", "Odile", "Ninon", "Alice", "Gaël", "Gatien", "Urbain", "Théophile", "Hiver", "Françoise-Xavière", "Armand", "Adèle", "Noël", "Étienne", "Jean", "Innocents", "David", "Roger", "Sylvestre"]
+    0: [
+      'Marie',
+      'Basile',
+      'Geneviève',
+      'Odilon',
+      'Édouard',
+      'Mélaine',
+      'Raymond',
+      'Lucien',
+      'Alix',
+      'Guillaume',
+      'Paulin',
+      'Tatiana',
+      'Yvette',
+      'Nina',
+      'Rémi',
+      'Marcel',
+      'Roseline',
+      'Prisca',
+      'Marius',
+      'Sébastien',
+      'Agnès',
+      'Vincent',
+      'Barnard',
+      'Fr. de Sales',
+      'Conv. de Paul',
+      'Paule',
+      'Angèle',
+      "Thomas d'A.",
+      'Gildas',
+      'Martine',
+      'Marcelle',
+    ],
+    1: [
+      'Ella',
+      'Présentation',
+      'Blaise',
+      'Véronique',
+      'Agathe',
+      'Gaston',
+      'Eugénie',
+      'Jacqueline',
+      'Apolline',
+      'Arnaud',
+      'N.-D. Lourdes',
+      'Félix',
+      'Béatrice',
+      'Valentin',
+      'Claude',
+      'Julienne',
+      'Alexis',
+      'Bernadette',
+      'Gabin',
+      'Aimée',
+      'Pierre-Dam.',
+      'Isabelle',
+      'Lazare',
+      'Modeste',
+      'Roméo',
+      'Nestor',
+      'Honorine',
+      'Romain',
+      'Auguste',
+    ],
+    2: [
+      'Aubin',
+      'Charles le B.',
+      'Guénolé',
+      'Casimir',
+      'Olive',
+      'Colette',
+      'Félicité',
+      'Jean de Dieu',
+      'Françoise',
+      'Vivien',
+      'Rosine',
+      'Justine',
+      'Rodrigue',
+      'Mathilde',
+      'Louise',
+      'Bénédicte',
+      'Patrice',
+      'Cyrille',
+      'Joseph',
+      'Herbert',
+      'Clémence',
+      'Léa',
+      'Victorien',
+      'Catherine',
+      'Humbert',
+      'Larissa',
+      'Habib',
+      'Gontran',
+      'Gwladys',
+      'Amédée',
+      'Benjamin',
+    ],
+    3: [
+      'Hugues',
+      'Sandrine',
+      'Richard',
+      'Isidore',
+      'Irène',
+      'Marcellin',
+      'Jean-B. de la S.',
+      'Julie',
+      'Gautier',
+      'Fulbert',
+      'Stanislas',
+      'Jules',
+      'Ida',
+      'Maxime',
+      'Paterne',
+      'Benoît-Joseph',
+      'Anicet',
+      'Parfait',
+      'Emma',
+      'Odette',
+      'Anselme',
+      'Alexandre',
+      'Georges',
+      'Fidèle',
+      'Marc',
+      'Alida',
+      'Zita',
+      'Valérie',
+      'Catherine de S.',
+      'Robert',
+    ],
+    4: [
+      'Jérémie',
+      'Boris',
+      'Philippe',
+      'Sylvain',
+      'Judith',
+      'Prudence',
+      'Gisèle',
+      'Pacôme',
+      'Solange',
+      'Estelle',
+      'Achille',
+      'Rolande',
+      'Matthias',
+      'Denise',
+      'Honoré',
+      'Pascal',
+      'Éric',
+      'Yves',
+      'Bernardin',
+      'Constantin',
+      'Émile',
+      'Didier',
+      'Donatien',
+      'Sophie',
+      'Bérenger',
+      'Augustin',
+      'Germain',
+      'Aymar',
+      'Ferdinand',
+      'Visitation',
+    ],
+    5: [
+      'Justin',
+      'Blandine',
+      'Kévin',
+      'Clotilde',
+      'Igor',
+      'Norbert',
+      'Gilbert',
+      'Médard',
+      'Diane',
+      'Landry',
+      'Barnabé',
+      'Guy',
+      'Antoine de P.',
+      'Élisée',
+      'Germaine',
+      'Jean-Fr. Régis',
+      'Hervé',
+      'Léonce',
+      'Romuald',
+      'Silvère',
+      'Été',
+      'Alban',
+      'Audrey',
+      'Jean-Baptiste',
+      'Prosper',
+      'Anthelme',
+      'Fernand',
+      'Irénée',
+      'Pierre-Paul',
+      'Martial',
+    ],
+    6: [
+      'Thierry',
+      'Martinien',
+      'Thomas',
+      'Florent',
+      'Antoine',
+      'Mariette',
+      'Raoul',
+      'Thibault',
+      'Amandine',
+      'Ulrich',
+      'Benoît',
+      'Olivier',
+      'Henri',
+      'Camille',
+      'Donald',
+      'N.-D. Mt-Carmel',
+      'Charlotte',
+      'Frédéric',
+      'Arsène',
+      'Marina',
+      'Victor',
+      'Marie-Mad.',
+      'Brigitte',
+      'Christine',
+      'Jacques',
+      'Anne',
+      'Nathalie',
+      'Samson',
+      'Marthe',
+      'Juliette',
+      'Ignace de L.',
+    ],
+    7: [
+      'Alphonse',
+      'Julien Eymard',
+      'Lydie',
+      'Jean-M. Vianney',
+      'Abel',
+      'Transfiguration',
+      'Gaétan',
+      'Dominique',
+      'Amour',
+      'Laurent',
+      'Claire',
+      'Clarisse',
+      'Hippolyte',
+      'Evrard',
+      'Assomption',
+      'Armel',
+      'Hyacinthe',
+      'Hélène',
+      'Jean Eudes',
+      'Bernard',
+      'Christophe',
+      'Fabrice',
+      'Rose de Lima',
+      'Barthélemy',
+      'Louis',
+      'Natacha',
+      'Monique',
+      'Augustin',
+      'Sabine',
+      'Fiacre',
+      'Aristide',
+    ],
+    8: [
+      'Gilles',
+      'Ingrid',
+      'Grégoire',
+      'Rosalie',
+      'Raïssa',
+      'Bertrand',
+      'Reine',
+      'Nativité',
+      'Alain',
+      'Inès',
+      'Adelphe',
+      'Apollinaire',
+      'Aimé',
+      'Exaltation',
+      'Roland',
+      'Édith',
+      'Renaud',
+      'Nadège',
+      'Émilie',
+      'Davy',
+      'Matthieu',
+      'Maurice',
+      'Constant',
+      'Thecle',
+      'Hermann',
+      'Côme',
+      'Vincent de P.',
+      'Venceslas',
+      'Gabriel',
+      'Jérôme',
+    ],
+    9: [
+      "Thérèse de l'E.",
+      'Léger',
+      'Gérard',
+      "Fr. d'Assise",
+      'Fleur',
+      'Bruno',
+      'Serge',
+      'Pélagie',
+      'Denis',
+      'Ghislain',
+      'Firmin',
+      'Wilfried',
+      'Géraud',
+      'Juste',
+      "Thérèse d'A.",
+      'Edwige',
+      'Baudouin',
+      'Luc',
+      'René',
+      'Adeline',
+      'Céline',
+      'Élodie',
+      'Jean de Capistran',
+      'Florentin',
+      'Crépin',
+      'Dimitri',
+      'Émeline',
+      'Jude',
+      'Narcisse',
+      'Bienvenue',
+      'Quentin',
+    ],
+    10: [
+      'Toussaint',
+      'Défunts',
+      'Hubert',
+      'Charles',
+      'Sylvie',
+      'Bertille',
+      'Carine',
+      'Geoffroy',
+      'Théodore',
+      'Léon',
+      'Armistice',
+      'Christian',
+      'Brice',
+      'Sidoine',
+      'Albert',
+      'Marguerite',
+      'Élisabeth',
+      'Aude',
+      'Tanguy',
+      'Edmond',
+      'Prés. Marie',
+      'Cécile',
+      'Clément',
+      'Flora',
+      'Catherine',
+      'Delphine',
+      'Séverin',
+      'Jacques de la M.',
+      'Saturnin',
+      'André',
+    ],
+    11: [
+      'Florence',
+      'Viviane',
+      'François-Xavier',
+      'Barbara',
+      'Gérald',
+      'Nicolas',
+      'Ambroise',
+      'Immaculée Conc.',
+      'Pierre Fourier',
+      'Romaric',
+      'Daniel',
+      'Jeanne-Fr. de Ch.',
+      'Lucie',
+      'Odile',
+      'Ninon',
+      'Alice',
+      'Gaël',
+      'Gatien',
+      'Urbain',
+      'Théophile',
+      'Hiver',
+      'Françoise-Xavière',
+      'Armand',
+      'Adèle',
+      'Noël',
+      'Étienne',
+      'Jean',
+      'Innocents',
+      'David',
+      'Roger',
+      'Sylvestre',
+    ],
   };
-  return (saints[month] && saints[month][day - 1]) || "Saint du Jour";
+  return (saints[month] && saints[month][day - 1]) || 'Saint du Jour';
 };
 
+/**
+ * Decode base64 string to Uint8Array.
+ * @param {string} base64 - Base64 encoded string.
+ * @returns {Uint8Array} Decoded byte array.
+ */
 function decodeBase64(base64: string): Uint8Array {
   const binaryString = atob(base64);
   const bytes = new Uint8Array(binaryString.length);
@@ -125,11 +536,19 @@ function decodeBase64(base64: string): Uint8Array {
   return bytes;
 }
 
+/**
+ * Decodes audio data for playback.
+ * @param {Uint8Array} data - Audio byte data.
+ * @param {AudioContext} ctx - Audio context.
+ * @param {number} sampleRate - Target sample rate.
+ * @param {number} numChannels - Number of channels.
+ * @returns {Promise<AudioBuffer>} Decoded audio buffer.
+ */
 async function decodeAudioData(
   data: Uint8Array,
   ctx: AudioContext,
   sampleRate: number,
-  numChannels: number
+  numChannels: number,
 ): Promise<AudioBuffer> {
   const dataInt16 = new Int16Array(data.buffer);
   const frameCount = dataInt16.length / numChannels;
@@ -143,6 +562,10 @@ async function decodeAudioData(
   return buffer;
 }
 
+/**
+ * Builds the expert analysis prompt for Gemini.
+ * @returns {string} The constructed prompt.
+ */
 const buildExpertPrompt = () => {
   const today = new Date().toLocaleDateString('fr-FR');
   return `Tu es un assistant météo pour l'OISANS. RÉPONDS UNIQUEMENT avec le format EXACT ci-dessous. N'ajoute AUCUN texte d'introduction ni de conclusion.
@@ -172,11 +595,11 @@ Villard-Reculas : X°C
  (Analyse du trafic en temps réel dans un rayon de 20km autour du Bourg d'Oisans - Sources: Waze / Google Maps / Itinisère)
  Statut Global: (Fluide/Ralenti/Accidents/Fermoirs)
  Incidents: (Détail de TOUS les accidents, bouchons ou routes coupées sur les principaux axes et directions du secteur OISANS)
- 
+
  [RISQUES]
  Sismique: (Faible/Modéré/Élevé ou "Aucune alerte en cours")
  Crues: (Vert/Jaune/Orange/Rouge ou "Aucune alerte en cours")
- 
+
  [EVENEMENTS]
  - (Cherche les VRAIS événements sur OISANS.com, alpedhuez.com et les2alpes.com)
  - Priorité aux événements d'AUJOURD'HUI. Si peu nombreux, ajoute les événements majeurs de la SEMAINE à VENIR.
@@ -184,10 +607,10 @@ Villard-Reculas : X°C
  - Événement 1 (Date + Nom + Lieu)
  - Événement 2 (Date + Nom + Lieu)
  - Événement 3 (Date + Nom + Lieu)
- 
+
  [LUNE]
  Phase actuelle de la lune (NOM de la phase uniquement, sans AUCUN emoji, surtout pas de doré/jaune)
- 
+
  INSTRUCTIONS CRITIQUES:
   - Date du jour: ${today}
   - RECHERCHE WEB OBLIGATOIRE :
@@ -196,124 +619,108 @@ Villard-Reculas : X°C
     3. AGENDA: OISANS.com/agenda, alpedhuez.com/fr/hiver/agenda, les2alpes.com/fr/hiver/agenda
   - NE CHERCHE PAS Villard-Bonnot ni Espace Aragon.
   - Pour la MÉTÉO : Sois TRES précis sur les températures. Si une inversion thermique est détectée (plus chaud en station qu'au Bourg d'Oisans), signale-le.
-  - Pour le TRAFIC : Ne nomme JAMAIS de numéros de routes (pas de RD1091, RD526, etc.). Parle uniquement en "Axes" et "Directions" (ex: Direction Grenoble, Axe stations). Rapporte les incidents de moins de 3 heures.
-  - Si tu ne trouves rien de spécial, écris "Trafic fluide sur l'ensemble du secteur OISANS".
+  - Pour le TRAFIC : Ne nomme JAMAIS de numéros de routes (Sauf RN 1075, pas de RD1091, RD526, etc.). Parle uniquement en "Axes" et "Directions" (ex: Direction Grenoble, Axe stations). Rapporte les incidents de moins de 3 heures.
+  - Si tu ne trouves rien de spécial, écris "Trafic fluide sur l'ensemble du secteur".
   - Rappelle-toi : écris TOUJOURS "OISANS" en majuscules dans tes réponses.
   - RESPECTE EXACTEMENT le format avec les balises [SECTION]`;
 };
 
-const fetchExpertTextWithFallback = async (prompt: string): Promise<{ text: string; sources: any[] }> => {
-  if (!hasGeminiKey) {
-    throw new Error('❌ Clé API Gemini requise');
+/**
+ * Fetches expert weather analysis text.
+ * @param {string} prompt - The analysis prompt.
+ * @returns {Promise<{ text: string; sources: unknown[] }>} The analysis result.
+ */
+const fetchExpertTextWithFallback = async (prompt: string): Promise<AISources> => {
+  const apiKey = getGeminiKey();
+  if (!apiKey) {
+    console.error('Clé API Gemini manquante (VITE_GEMINI_API_KEY)');
+    throw new Error('api_key_required');
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY || '' });
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: {
-        tools: [{ googleSearch: {} } as any],
-      }
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      tools: [{ googleSearch: {} } as unknown as Tool],
     });
 
-    const text = response.text || '';
-    if (!text) {
-      console.warn('⚠️ Gemini a renvoyé un texte vide');
+    const result = await model.generateContent(prompt);
+    const response = result.response;
+    const text = response.text();
+
+    interface GeminiGroundingChunk {
+      web?: { url: string; title?: string };
+    }
+    interface GeminiCandidate {
+      groundingMetadata?: { groundingChunks?: GeminiGroundingChunk[] };
+    }
+    interface GeminiResponseRaw {
+      candidates?: GeminiCandidate[];
     }
 
-    return {
-      text,
-      sources: (response as any).candidates?.[0]?.groundingMetadata?.groundingChunks || [],
-    };
-  } catch (error: any) {
-    console.error('❌ Erreur Gemini API Text:', error);
-    throw new Error(`Gemini API erreur: ${error.message || 'Erreur inconnue'}`);
+    // Extraction des sources de search grounding
+    const rawResponse = response as unknown as GeminiResponseRaw;
+    const candidates = rawResponse.candidates;
+    const groundingMetadata = candidates?.[0]?.groundingMetadata;
+    const sources: GroundingSource[] =
+      groundingMetadata?.groundingChunks
+        ?.map((chunk) => {
+          const url = chunk.web?.url || '';
+          const displayUri = chunk.web?.title || chunk.web?.url || 'Source Web';
+          return { url, displayUri };
+        })
+        .filter((s: GroundingSource) => s.url) || [];
+
+    console.debug('Analyse IA complétée :', sources.length, 'sources consultées');
+    return { text, sources };
+  } catch (error: unknown) {
+    console.error('Erreur Gemini API:', error);
+    throw new Error('operation_failed');
   }
 };
 
-// Essayer un endpoint local pour TTS
-async function tryLocalTtsEndpoint(base: string, path: string, prompt: string) {
-  const url = `${base}${path}`;
-  const payloads = [
-    { input: prompt },
-    { text: prompt },
-    { prompt },
-  ];
-
-  for (const body of payloads) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(15000) // 15s timeout pour TTS
-      });
-
-      if (!res.ok) continue;
-      const json = await res.json();
-
-      // Extraire l'audio base64
-      const audio = json.audio || json.base64 || json.data;
-      if (audio && typeof audio === 'string') {
-        console.info(`✅ TTS local détecté: ${base}${path}`);
-        return audio;
-      }
-    } catch (e) {
-      continue;
-    }
-  }
-  return null;
-}
-
-const fetchBulletinAudioWithFallback = async (prompt: string) => {
+/**
+ * Genere l'audio du bulletin avec Gemini TTS
+ */
+const fetchAudioForPrompt = async (
+  prompt: string,
+): Promise<{ audio: string | null; perf?: { latencyMs: number; model: string } }> => {
   if (!prompt) return { audio: null };
   const t0 = performance.now();
 
   if (hasGeminiKey) {
     try {
-      console.info('🎙️ Génération de l\'audio avec Gemini...');
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY || '' });
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash-exp',
+      const genAI = new GoogleGenerativeAI(getGeminiKey());
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+      const result = await model.generateContent({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          responseModalities: ['audio'],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
-        },
       });
 
-      const audioPart = response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+      const response = result.response;
+      interface GeminiAudioCandidate {
+        content: {
+          parts: Array<{ inlineData?: { data: string } }>;
+        };
+      }
+      interface GeminiAudioResponseRaw {
+        candidates?: GeminiAudioCandidate[];
+      }
+      const rawResponse = response as unknown as GeminiAudioResponseRaw;
+      const candidates = rawResponse.candidates;
+      const audioPart = candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
       const audio = audioPart?.inlineData?.data || null;
 
       if (audio) {
-        const perf = { latencyMs: Math.round(performance.now() - t0), model: 'gemini-tts' };
-        console.info('✅ Audio bulletin généré avec succès');
-        return { audio, perf };
-      } else {
-        console.warn('⚠️ Aucun audio trouvé dans la réponse Gemini');
+        return {
+          audio,
+          perf: { latencyMs: Math.round(performance.now() - t0), model: 'gemini-tts' },
+        };
       }
     } catch (error) {
-      console.warn('❌ Gemini TTS erreur:', error);
+      console.warn('Gemini Audio erreur:', error);
     }
   }
-
-  // Priorité 2: TTS local (fallback si branché)
-  console.info('🔍 Recherche d\'un serveur TTS local en fallback...');
-  const LOCAL_AI_BASE_URLS = ['http://localhost:1234', 'http://localhost:8080', 'http://localhost:11434'];
-  for (const base of LOCAL_AI_BASE_URLS) {
-    for (const path of LOCAL_TTS_ENDPOINTS) {
-      const audio = await tryLocalTtsEndpoint(base, path, prompt);
-      if (audio) {
-        localStorage.setItem('allo_meteo_local_tts_endpoint', `${base}${path}`);
-        const perf = { latencyMs: Math.round(performance.now() - t0), model: 'local-tts' };
-        return { audio, perf };
-      }
-    }
-  }
-
-  console.warn('⚠️ Aucun TTS disponible (Gemini + local)');
   return { audio: null };
 };
 
@@ -322,7 +729,7 @@ const App = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [globalLoading, setGlobalLoading] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [expertData, setExpertData] = useState<any>(null);
+  const [expertData, setExpertData] = useState<AISources | null>(null);
   const [newsletterSubscribed, setNewsletterSubscribed] = useState(false);
   const [manualWeather, setManualWeather] = useState<ManualWeather | null>(null);
   const [stationWeather, setStationWeather] = useState<{ [key: string]: string }>({});
@@ -336,7 +743,7 @@ const App = () => {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   useEffect(() => {
     if (userProfile) {
-      console.info('👤 Profil utilisateur chargé:', userProfile.city);
+      console.info('Profil utilisateur charge:', userProfile.city);
     }
   }, [userProfile]);
   const [cookiePreferences, setCookiePreferences] = useState({
@@ -345,6 +752,9 @@ const App = () => {
     analytics: false,
   });
 
+  /**
+   * Fetches expert data from Gemini.
+   */
   const fetchExpertData = async () => {
     setGlobalLoading(true);
     try {
@@ -363,7 +773,7 @@ const App = () => {
       localStorage.setItem('lastAIFetch', Date.now().toString());
     } catch (error) {
       console.error('Expert fetch failed:', error);
-      setExpertData({ text: 'Analyse météorologique temporairement indisponible. Veuillez rafraîchir la page.', sources: [] });
+      setExpertData({ text: 'Indisponible. Veuillez reessayer.', sources: [] });
     } finally {
       setGlobalLoading(false);
     }
@@ -373,38 +783,43 @@ const App = () => {
     // Local model logic removed
   }, []);
 
-
   const audioContextRef = useRef<AudioContext | null>(null);
   const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
 
+  /**
+   * Fetches weather data from multiple sources with fallback logic.
+   */
   const fetchManualWeather = async () => {
     try {
       setManualLoading(true);
+      let success = false;
+      const t0 = performance.now();
 
-      // 1. Fetch Bourg d'OISANS (Primary: Open-Meteo, Fallback: Prevision-Meteo)
-      try {
-        const openMeteoUrl = `https://api.open-meteo.com/v1/forecast?latitude=${LOCATION_COORDS.lat}&longitude=${LOCATION_COORDS.lon}&current=temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,wind_direction_10m,precipitation,snowfall&timezone=auto`;
-        const res = await fetch(openMeteoUrl);
-        const data = await res.json();
-        if (data.current) {
-          setManualWeather({
-            temperature: data.current.temperature_2m,
-            windspeed: data.current.wind_speed_10m,
-            winddirection: data.current.wind_direction_10m,
-            humidity: data.current.relative_humidity_2m,
-            pressure: data.current.surface_pressure,
-            precipitation: data.current.precipitation,
-            snowfall: data.current.snowfall,
-            timestamp: new Date().toISOString(),
-          });
+      /**
+       * Fetch helper with timeout.
+       */
+      const fetchWithTimeout = async (url: string, timeout = 5000) => {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), timeout);
+        try {
+          const response = await fetch(url, { signal: controller.signal });
+          clearTimeout(id);
+          return response;
+        } catch (e) {
+          clearTimeout(id);
+          throw e;
         }
-      } catch (e) {
-        console.warn('Open-Meteo failed, falling back to Prevision-Meteo');
-        const mainUrl = `https://www.prevision-meteo.ch/services/json/lat=${LOCATION_COORDS.lat}&lng=${LOCATION_COORDS.lon}`;
-        const mainRes = await fetch(mainUrl);
-        const mainData = await mainRes.json();
-        if (mainData.current_condition) {
-          const current = mainData.current_condition;
+      };
+
+      // 1. Prevision-Meteo.ch
+      try {
+        console.info('Accedant : Prevision-Meteo.ch...');
+        const url = new URL('https://www.prevision-meteo.ch/services/json/');
+        url.pathname += `lat=${LOCATION_COORDS.lat}&lng=${LOCATION_COORDS.lon}`;
+        const res = await fetchWithTimeout(url.toString());
+        const data = await res.json();
+        if (data.current_condition) {
+          const current = data.current_condition;
           setManualWeather({
             temperature: parseFloat(current.tmp),
             windspeed: parseFloat(current.wnd_spd),
@@ -412,42 +827,145 @@ const App = () => {
             humidity: parseFloat(current.humidity),
             pressure: parseFloat(current.pressure),
             precipitation: current.precip ? parseFloat(current.precip) : 0,
-            snowfall: 0, // Pas dispo directement sur Prevision-Meteo
+            snowfall: 0,
             timestamp: new Date().toISOString(),
           });
+          console.info('Succes Prevision-Meteo');
+          success = true;
+        }
+      } catch (e: unknown) {
+        console.warn('Prevision-Meteo echoue');
+      }
+
+      // 2. Open-Meteo
+      if (!success) {
+        try {
+          console.info('Accedant : Open-Meteo...');
+          const url = new URL('https://api.open-meteo.com/v1/forecast');
+          url.searchParams.set('latitude', LOCATION_COORDS.lat.toString());
+          url.searchParams.set('longitude', LOCATION_COORDS.lon.toString());
+          url.searchParams.set(
+            'current',
+            'temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,wind_direction_10m,precipitation,snowfall',
+          );
+          url.searchParams.set('timezone', 'auto');
+          const res = await fetchWithTimeout(url.toString());
+          const data = await res.json();
+          if (data.current) {
+            setManualWeather({
+              temperature: data.current.temperature_2m,
+              windspeed: data.current.wind_speed_10m,
+              winddirection: data.current.wind_direction_10m,
+              humidity: data.current.relative_humidity_2m,
+              pressure: data.current.surface_pressure,
+              precipitation: data.current.precipitation,
+              snowfall: data.current.snowfall,
+              timestamp: new Date().toISOString(),
+            });
+            console.info('Succes Open-Meteo');
+            success = true;
+          }
+        } catch (e: unknown) {
+          console.warn('Open-Meteo echoue');
         }
       }
 
-      // 2. Fetch All Other Stations (Open-Meteo for speed and accuracy)
+      // B. OpenWeather
+      if (hasOpenWeatherKey && !success) {
+        try {
+          console.info("Tentative d'accès : OpenWeatherMap...");
+          const res = await fetchWithTimeout(
+            `https://api.openweathermap.org/data/2.5/weather?lat=${LOCATION_COORDS.lat}&lon=${LOCATION_COORDS.lon}&appid=${OPENWEATHER_API_KEY}&units=metric&lang=fr`,
+          );
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if (data.main) {
+            setManualWeather({
+              temperature: Number(data.main.temp),
+              windspeed: Number(data.wind?.speed || 0) * 3.6,
+              winddirection: Number(data.wind?.deg || 0),
+              humidity: Number(data.main.humidity),
+              pressure: Number(data.main.pressure),
+              precipitation: Number(data.rain?.['1h'] || data.rain?.['3h'] || 0),
+              snowfall: Number(data.snow?.['1h'] || data.snow?.['3h'] || 0) / 10,
+              timestamp: new Date().toISOString(),
+            });
+            console.info(`Succès OpenWeather: ${data.main.temp}°C`);
+            success = true;
+          }
+        } catch (e: unknown) {
+          console.warn(`OpenWeather echoue: ${e instanceof Error ? e.message : 'Erreur inconnue'}`);
+        }
+      }
+
+      // C. WeatherAPI.com
+      if (hasWeatherApiKey && !success) {
+        try {
+          console.info("Tentative d'accès : WeatherAPI...");
+          const res = await fetchWithTimeout(
+            `https://api.weatherapi.com/v1/current.json?key=${WEATHERAPI_KEY}&q=${LOCATION_COORDS.lat},${LOCATION_COORDS.lon}&aqi=no&lang=fr`,
+          );
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if (data.current) {
+            setManualWeather({
+              temperature: Number(data.current.temp_c),
+              windspeed: Number(data.current.wind_kph),
+              winddirection: Number(data.current.wind_degree),
+              humidity: Number(data.current.humidity),
+              pressure: Number(data.current.pressure_mb),
+              precipitation: Number(data.current.precip_mm),
+              snowfall: 0,
+              timestamp: new Date().toISOString(),
+            });
+            console.info(`Succès WeatherAPI: ${data.current.temp_c}°C`);
+            success = true;
+          }
+        } catch (e: unknown) {
+          console.warn(`WeatherAPI echoue: ${e instanceof Error ? e.message : 'Erreur inconnue'}`);
+        }
+      }
+
+      if (success) {
+        console.info(`Meteo mise a jour en ${Math.round(performance.now() - t0)}ms`);
+      } else {
+        console.error('Aucune source meteo disponible !');
+      }
+
+      // 4. Mise a jour des stations secondaires
       const stationsResults: { [key: string]: string } = {};
       for (const [name, coords] of Object.entries(STATIONS_COORDS)) {
+        let stationLoaded = false;
         try {
-          const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}&current=temperature_2m&timezone=auto`);
+          const res = await fetchWithTimeout(
+            `https://api.open-meteo.com/v1/forecast?latitude=${coords.lat}&longitude=${coords.lon}&current=temperature_2m&timezone=auto`,
+            2000,
+          );
           const data = await res.json();
           if (data.current) {
             stationsResults[name] = `${data.current.temperature_2m.toFixed(1)}°C`;
+            stationLoaded = true;
           }
-        } catch (e) {
-          stationsResults[name] = "--°C";
+        } catch {
+          /* ignore */
         }
+        if (!stationLoaded) stationsResults[name] = '--°C';
       }
       setStationWeather(stationsResults);
-
     } catch (error) {
-      console.error('Manual weather fetch failed', error);
+      console.error('Erreur globale fetchManualWeather', error);
     } finally {
       setManualLoading(false);
     }
   };
 
-
-  // Marque l'activité utilisateur pour déclencher les requêtes API
+  // Marque l'activite utilisateur pour declencher les requetes API
   const markUserActivity = () => {
     localStorage.setItem('lastUserActivity', Date.now().toString());
-    console.info('👤 Activité utilisateur détectée');
+    console.info('Activite utilisateur detectee');
   };
 
-  // Vérifie si un utilisateur est actif (interaction récente)
+  // Verifie si un utilisateur est actif (interaction recente)
   const isUserActive = (): boolean => {
     const lastActivity = localStorage.getItem('lastUserActivity');
     if (!lastActivity) return false;
@@ -474,7 +992,7 @@ const App = () => {
     setCookiePreferences(prefs);
 
     if (!prefs.functional) {
-      console.info('🚫 Cookies fonctionnels refusés - pas de profil utilisateur');
+      console.info('Cookies fonctionnels refusés - pas de profil utilisateur');
       return;
     }
 
@@ -493,7 +1011,7 @@ const App = () => {
 
         const geoRes = await fetch('https://ipapi.co/json/', {
           signal: controller.signal,
-          headers: { 'Accept': 'application/json' }
+          headers: { Accept: 'application/json' },
         });
         clearTimeout(timeoutId);
 
@@ -561,32 +1079,20 @@ const App = () => {
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-
-    // Init RGPD et profil utilisateur
     initUserProfile();
-
-    // Marquer l'activité au chargement de la page
     markUserActivity();
 
-    // Check cache - si données récentes, ne pas appeler l'API
     const lastFetch = localStorage.getItem('lastAIFetch');
-    const cacheExpired = !lastFetch || (Date.now() - parseInt(lastFetch)) > AUTO_REFRESH_INTERVAL_MS;
+    const cacheExpired = !lastFetch || Date.now() - parseInt(lastFetch) > AUTO_REFRESH_INTERVAL_MS;
 
-    // Toujours fetch la météo basique (pas coûteux)
     fetchManualWeather();
 
-    // Fetch IA seulement si utilisateur actif ET cache expiré
     if (isUserActive() && cacheExpired) {
-      console.info('🚀 Chargement IA pour utilisateur actif');
+      console.info('Initialisation des donnees expert...');
       fetchExpertData();
     } else if (!isUserActive()) {
-      console.info('💤 Pas d\'utilisateur actif - requêtes IA désactivées');
-    } else {
-      console.info('📦 Utilisation cache IA - expire dans', Math.round((AUTO_REFRESH_INTERVAL_MS - (Date.now() - parseInt(lastFetch))) / 60000), 'min');
+      console.info("Pas d'utilisateur actif - requetes IA desactivees");
     }
-
-    // Pas de background refresh automatique tant que l'onglet est ouvert
-    // Le refresh se fait uniquement à l'ouverture/rechargement si le cache de 12h est expiré.
 
     return () => {
       clearInterval(timer);
@@ -595,57 +1101,86 @@ const App = () => {
   }, []);
 
   const getSection = (key: string) => {
-    if (!expertData?.text) return "";
-    const parts = expertData.text.split(`[${key}]`);
-    if (parts.length < 2) return "";
-    return parts[1].split('[')[0].trim();
+    if (!expertData?.text) return '';
+    // Regex pour capturer entre [KEY] et le prochain [ ou la fin
+    const regex = new RegExp(`\\[${key}\\]([\\s\\S]*?)(?=\\[|$)`, 'i');
+    const match = expertData.text.match(regex);
+    return match ? match[1].trim() : '';
   };
 
   const stopAudio = () => {
-    activeSourcesRef.current.forEach(source => {
-      try { source.stop(); source.disconnect(); } catch (e) { }
+    activeSourcesRef.current.forEach((source) => {
+      try {
+        source.stop();
+        source.disconnect();
+      } catch {
+        /* ignore */
+      }
     });
     activeSourcesRef.current.clear();
     setIsPlaying(false);
     if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => { });
+      audioContextRef.current.close().catch(() => {});
     }
   };
 
   const playWeatherBulletin = async () => {
-    markUserActivity(); // Interaction utilisateur
-    if (isPlaying) { stopAudio(); return; }
+    markUserActivity();
+    if (isPlaying) {
+      stopAudio();
+      return;
+    }
 
     setLoading(true);
     try {
       if (!expertData?.text) {
-        console.info('🔄 Expert data missing, fetching before audio...');
+        console.info('Donnees expert manquantes, recuperation avant audio...');
         const prompt = buildExpertPrompt();
         const res = await fetchExpertTextWithFallback(prompt);
         setExpertData({ text: res.text, sources: res.sources });
       }
 
-      const currentExpertText = expertData?.text || (await fetchExpertTextWithFallback(buildExpertPrompt())).text;
+      const currentExpertText = expertData?.text;
+      if (!currentExpertText) return;
 
-      const promptText = `Tu es l'assistant Allo-Météo. INTERDICTION ABSOLUE : ne dis pas "Phoenix Project" ni "réel". 
-      CONSIGNE PHONÉTIQUE : Prononce TRÈS DISTINCTEMENT les terminaisons. 
+      const promptText = `Tu es l'assistant Allo-Météo. INTERDICTION ABSOLUE : ne dis pas "Phoenix Project" ni "réel".
+      CONSIGNE PHONÉTIQUE : Prononce TRÈS DISTINCTEMENT les terminaisons.
       Dis clairement : LES DEUZZZZ ALPEs, BOUR D'OISAN, OZZZZ EN OISAN, ALPE D'HUEZZZZ.
       Données : ${currentExpertText}`;
-      const { audio: base64Audio } = await fetchBulletinAudioWithFallback(promptText);
-      if (!base64Audio) { setLoading(false); return; }
+
+      const { audio: base64Audio } = await fetchAudioForPrompt(promptText);
+      if (!base64Audio) {
+        setLoading(false);
+        return;
+      }
 
       ttsCooldownRef.current = Date.now();
 
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      const audioBuffer = await decodeAudioData(decodeBase64(base64Audio), audioContextRef.current, 24000, 1);
+      audioContextRef.current = new (
+        window.AudioContext ||
+        (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext!
+      )({ sampleRate: 24000 });
+      const audioBuffer = await decodeAudioData(
+        decodeBase64(base64Audio),
+        audioContextRef.current,
+        24000,
+        1,
+      );
       const source = audioContextRef.current.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(audioContextRef.current.destination);
-      source.onended = () => { setIsPlaying(false); activeSourcesRef.current.delete(source); };
+      source.onended = () => {
+        setIsPlaying(false);
+        activeSourcesRef.current.delete(source);
+      };
       activeSourcesRef.current.add(source);
       setIsPlaying(true);
       source.start(0);
-    } catch (error) { console.error(error); } finally { setLoading(false); }
+    } catch (error) {
+      console.error('Erreur lecture bulletin:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const meteoText = getSection('METEO');
@@ -654,57 +1189,152 @@ const App = () => {
 
   // Gestion des états IA
   const hasAnyAIData = expertData?.text?.trim().length > 0;
-  const hasRisquesData = risquesText.trim().length > 0;
-
-  // États: Chargement initial, IA a répondu, IA indisponible
   const isLoading = !hasAnyAIData && globalLoading;
+  const hasRisquesData = risquesText.trim().length > 0;
   const risqueSismique = hasRisquesData
-    ? (risquesText.match(/sismique\s?[:-]?\s?([^,.\n]+)/i)?.[1] || "Aucune alerte en cours")
-    : (isLoading ? "Chargement..." : (hasAnyAIData ? "Aucune alerte en cours" : "IA indisponible"));
+    ? risquesText.match(/sismique\s?[:-]?\s?([^,.\n]+)/i)?.[1] || 'Aucune alerte en cours'
+    : isLoading
+      ? 'Chargement...'
+      : hasAnyAIData
+        ? 'Aucune alerte en cours'
+        : 'IA indisponible';
   const risqueCrues = hasRisquesData
-    ? (risquesText.match(/crues\s?[:-]?\s?([^,.\n[]+)/i)?.[1] || "Donnée indisponible")
-    : (globalLoading ? "RECHERCHE EN COURS..." : (hasAnyAIData ? "Vigilance Verte" : "IA Indisponible"));
+    ? risquesText.match(/crues\s?[:-]?\s?([^,.\n[]+)/i)?.[1] || 'Donnée indisponible'
+    : globalLoading
+      ? 'RECHERCHE EN COURS...'
+      : hasAnyAIData
+        ? 'Vigilance Verte'
+        : 'IA Indisponible';
 
   const getAlertStyle = (text: string) => {
     const t = text.toLowerCase();
-    if (t.includes('rouge')) return { bg: 'bg-red-500 border-red-400', title: 'DANGER ROUGE', text: 'text-white', icon: 'text-white', pulse: true, label: 'ALERTE MAXIMALE' };
-    if (t.includes('orange')) return { bg: 'bg-orange-500 border-orange-400', title: 'VIGILANCE ORANGE', text: 'text-white', icon: 'text-white', pulse: true, label: 'PRUDENCE ACCRUE' };
-    if (t.includes('jaune')) return { bg: 'bg-yellow-400 border-yellow-300', title: 'VIGILANCE JAUNE', text: 'text-yellow-950', icon: 'text-yellow-900', pulse: false, label: 'SOYEZ ATTENTIF' };
-    return { bg: 'bg-emerald-500 border-emerald-400', title: 'VIGILANCE VERTE', text: 'text-white', icon: 'text-white', pulse: false, label: 'SITUATION CALME' };
+    if (t.includes('rouge'))
+      return {
+        bg: 'bg-red-500 border-red-400',
+        title: 'DANGER ROUGE',
+        text: 'text-white',
+        icon: 'text-white',
+        pulse: true,
+        label: 'ALERTE MAXIMALE',
+      };
+    if (t.includes('orange'))
+      return {
+        bg: 'bg-orange-500 border-orange-400',
+        title: 'VIGILANCE ORANGE',
+        text: 'text-white',
+        icon: 'text-white',
+        pulse: true,
+        label: 'PRUDENCE ACCRUE',
+      };
+    if (t.includes('jaune'))
+      return {
+        bg: 'bg-yellow-400 border-yellow-300',
+        title: 'VIGILANCE JAUNE',
+        text: 'text-yellow-950',
+        icon: 'text-yellow-900',
+        pulse: false,
+        label: 'SOYEZ ATTENTIF',
+      };
+    return {
+      bg: 'bg-emerald-500 border-emerald-400',
+      title: 'VIGILANCE VERTE',
+      text: 'text-white',
+      icon: 'text-white',
+      pulse: false,
+      label: 'SITUATION CALME',
+    };
   };
 
   const floodStyle = getAlertStyle(risqueCrues);
   const seismicStyle = getAlertStyle(risqueSismique);
 
   const routeContent = getSection('ROUTE');
-  const routeStatus = globalLoading ? "ANALYSE..." : (routeContent.match(/statut global\s?[:\-]?\s?([^.\n[]+)/i)?.[1]?.trim() || "Trafic Fluide");
-  const rawDetails = routeContent.match(/incidents\s?[:\-]?\s?([^.\n[]+)/i)?.[1]?.trim();
-  const routeDetails = globalLoading ? "Scan des axes en cours..." : (rawDetails && !rawDetails.toLowerCase().includes("aucun") ? rawDetails : "");
+  const routeStatus = globalLoading
+    ? 'ANALYSE...'
+    : routeContent.match(/statut global\s?[:-]?\s?([^.\n[]+)/i)?.[1]?.trim() || 'Trafic Fluide';
+  const rawDetails = routeContent.match(/incidents\s?[:-]?\s?([^.\n[]+)/i)?.[1]?.trim();
+  const routeDetails = globalLoading
+    ? 'Scan des axes routiers en cours...'
+    : rawDetails && !rawDetails.toLowerCase().includes('aucun')
+      ? rawDetails
+      : '';
 
   const getRouteStyle = (status: string) => {
     const s = status.toLowerCase();
-    if (s.includes('analyse') || s.includes('scan')) return { bg: 'bg-indigo-600', text: 'text-white', icon: 'text-white', label: 'ANALYSE EN COURS', pulse: true };
-    if (s.includes('accidents') || s.includes('fermé') || s.includes('coupée')) return { bg: 'bg-red-600', text: 'text-white', icon: 'text-white', label: 'ALERTE CRITIQUE', pulse: true };
-    if (s.includes('ralenti') || s.includes('travaux') || s.includes('hivernal') || s.includes('établi')) return { bg: 'bg-orange-500', text: 'text-white', icon: 'text-white', label: 'TRAFIC PERTURBÉ', pulse: true };
-    return { bg: 'bg-emerald-500', text: 'text-white', icon: 'text-white', label: 'ÉTAT DU RÉSEAU', pulse: false };
+    if (s.includes('analyse') || s.includes('scan'))
+      return {
+        bg: 'bg-indigo-600',
+        text: 'text-white',
+        icon: 'text-white',
+        label: 'ANALYSE EN COURS',
+        pulse: true,
+      };
+    if (s.includes('accidents') || s.includes('fermé') || s.includes('coupée'))
+      return {
+        bg: 'bg-red-600',
+        text: 'text-white',
+        icon: 'text-white',
+        label: 'ALERTE CRITIQUE',
+        pulse: true,
+      };
+    if (
+      s.includes('ralenti') ||
+      s.includes('travaux') ||
+      s.includes('hivernal') ||
+      s.includes('établi')
+    )
+      return {
+        bg: 'bg-orange-500',
+        text: 'text-white',
+        icon: 'text-white',
+        label: 'TRAFIC PERTURBÉ',
+        pulse: true,
+      };
+    return {
+      bg: 'bg-emerald-500',
+      text: 'text-white',
+      icon: 'text-white',
+      label: 'ÉTAT DU RÉSEAU',
+      pulse: false,
+    };
   };
 
   const routeStyle = getRouteStyle(routeStatus);
-  const hasCriticalAlert = routeStyle.label === 'ALERTE CRITIQUE' || floodStyle.title.includes('DANGER') || seismicStyle.title.includes('DANGER');
+  const hasCriticalAlert =
+    routeStyle.label === 'ALERTE CRITIQUE' ||
+    floodStyle.title.includes('DANGER') ||
+    seismicStyle.title.includes('DANGER');
 
-  const manualTemperature = manualWeather?.temperature !== undefined ? manualWeather.temperature.toFixed(1) : null;
+  const manualTemperature =
+    manualWeather?.temperature !== undefined ? manualWeather.temperature.toFixed(1) : null;
   const manualHumidityValue = manualWeather?.humidity ?? null;
   const manualRainValue = manualWeather?.precipitation ?? null;
   const manualPressureValue = manualWeather?.pressure ?? null;
 
   // Prioriser Prevision-Meteo sur les valeurs par défaut
-  const currentTemp = manualTemperature || meteoText.match(/(\-?\d+)\s?°/)?.[1] || "...";
-  const humidity = (manualHumidityValue !== null ? Math.round(manualHumidityValue).toString() : meteoText.match(/(\d+)\s?%/)?.[1] || "...") + "%";
-  const rain = (manualRainValue !== null ? manualRainValue.toFixed(1) : meteoText.match(/(\d+[,.]?\d*)\s?mm/)?.[1] || "...") + " mm";
-  const snow = (manualWeather?.snowfall !== undefined && manualWeather?.snowfall !== null ? manualWeather.snowfall.toFixed(1) : (meteoText.match(/(\d+[,.]?\d*)\s?cm/i)?.[1] || "0.0")) + " cm";
-  const pressure = (manualPressureValue !== null ? manualPressureValue.toFixed(0) : meteoText.match(/(\d+)\s?hPa/)?.[1] || "...") + " hPa";
+  const currentTemp = manualTemperature || meteoText.match(/(-?\d+)\s?°/)?.[1] || '...';
+  const humidity =
+    (manualHumidityValue !== null
+      ? Math.round(manualHumidityValue).toString()
+      : meteoText.match(/(\d+)\s?%/)?.[1] || '...') + '%';
+  const rain =
+    (manualRainValue !== null
+      ? manualRainValue.toFixed(1)
+      : meteoText.match(/(\d+[,.]?\d*)\s?mm/)?.[1] || '...') + ' mm';
+  const snow =
+    (manualWeather?.snowfall !== undefined && manualWeather?.snowfall !== null
+      ? manualWeather.snowfall.toFixed(1)
+      : meteoText.match(/(\d+[,.]?\d*)\s?cm/i)?.[1] || '0.0') + ' cm';
+  const pressure =
+    (manualPressureValue !== null
+      ? manualPressureValue.toFixed(0)
+      : meteoText.match(/(\d+)\s?hPa/)?.[1] || '...') + ' hPa';
 
-  const hasInversionText = inversion.toLowerCase().includes("oui") || inversion.toLowerCase().includes("active") || inversion.toLowerCase().includes("présente") || inversion.toLowerCase().includes("yes");
+  const hasInversionText =
+    inversion.toLowerCase().includes('oui') ||
+    inversion.toLowerCase().includes('active') ||
+    inversion.toLowerCase().includes('présente') ||
+    inversion.toLowerCase().includes('yes');
   const hasInversion = hasInversionText || (manualWeather && manualWeather.temperature <= 2);
 
   // Calculer phase de lune actuelle
@@ -721,104 +1351,71 @@ const App = () => {
       const m = month + 12;
       const a = Math.floor(y / 100);
       const bComp = 2 - a + Math.floor(a / 4);
-      jdFinal = Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + day + bComp - 1524.5;
+      jdFinal =
+        Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + day + bComp - 1524.5;
     } else {
       const a = Math.floor(year / 100);
       const bComp = 2 - a + Math.floor(a / 4);
-      jdFinal = Math.floor(365.25 * (year + 4716)) + Math.floor(30.6001 * (month + 1)) + day + bComp - 1524.5;
+      jdFinal =
+        Math.floor(365.25 * (year + 4716)) +
+        Math.floor(30.6001 * (month + 1)) +
+        day +
+        bComp -
+        1524.5;
     }
 
     const daysSinceNew = (jdFinal - 2451550.1) % 29.53059;
     const phase = daysSinceNew / 29.53059;
 
-    if (phase < 0.0625) return "🌑 Nouvelle Lune";
-    if (phase < 0.1875) return "🌒 Premier Croissant";
-    if (phase < 0.3125) return "🌓 Premier Quartier";
-    if (phase < 0.4375) return "🌔 Gibbeuse Croissante";
-    if (phase < 0.5625) return "🌕 Pleine Lune";
-    if (phase < 0.6875) return "🌖 Gibbeuse Décroissante";
-    if (phase < 0.8125) return "🌗 Dernier Quartier";
-    if (phase < 0.9375) return "🌘 Dernier Croissant";
-    return "🌑 Nouvelle Lune";
+    if (phase < 0.0625) return '🌑 Nouvelle Lune';
+    if (phase < 0.1875) return '🌒 Premier Croissant';
+    if (phase < 0.3125) return '🌓 Premier Quartier';
+    if (phase < 0.4375) return '🌔 Gibbeuse Croissante';
+    if (phase < 0.5625) return '🌕 Pleine Lune';
+    if (phase < 0.6875) return '🌖 Gibbeuse Décroissante';
+    if (phase < 0.8125) return '🌗 Dernier Quartier';
+    if (phase < 0.9375) return '🌘 Dernier Croissant';
+    return '🌑 Nouvelle Lune';
   };
 
   const manualSummaryLine = manualWeather
-    ? `Prevision-Meteo.ch ${new Date(manualWeather.timestamp).toLocaleTimeString('fr-FR')} • ${manualWeather.temperature.toFixed(1)}°C`
+    ? `Dernière actualisation ${new Date(manualWeather.timestamp).toLocaleTimeString('fr-FR')} • ${manualWeather.temperature.toFixed(1)}°C`
     : '';
 
   return (
     <div className="min-h-screen w-full bg-[#F8FAFC] text-slate-900 font-sans pb-16">
       <style>{spinAnimation}</style>
 
-      {/* Bandeau RGPD Conforme */}
+      {/* Bandeau RGPD Conforme et Discret */}
       {showCookieBanner && !showCookieSettings && (
-        <div className="fixed bottom-0 left-0 right-0 bg-slate-900/98 backdrop-blur-xl text-white p-6 z-[9999] border-t-4 border-blue-500 shadow-2xl">
-          <div className="max-w-7xl mx-auto">
-            <div className="flex items-start gap-4 mb-6">
-              <div className="bg-blue-500 p-3 rounded-xl flex-shrink-0">
-                <Shield className="w-6 h-6" />
-              </div>
-              <div className="flex-1">
-                <h3 className="font-black text-xl mb-3 uppercase tracking-tight">🍪 Gestion des Cookies</h3>
-                <p className="text-sm text-slate-300 leading-relaxed mb-4">
-                  Nous utilisons des cookies pour améliorer votre expérience. Les <strong>cookies essentiels</strong> sont
-                  nécessaires au fonctionnement du site. Vous pouvez accepter ou refuser les cookies <strong>fonctionnels</strong>
-                  et <strong>analytiques</strong>.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                  <div className="bg-green-500/20 border border-green-500/50 p-3 rounded-xl">
-                    <div className="flex items-center gap-2 mb-2">
-                      <CheckCircle2 className="w-4 h-4 text-green-400" />
-                      <strong className="text-green-400">ESSENTIELS</strong>
-                      <span className="text-[10px] text-slate-400">(obligatoire)</span>
-                    </div>
-                    <p className="text-slate-300">Sécurité, session, préférences de base</p>
-                  </div>
-                  <div className="bg-blue-500/20 border border-blue-500/50 p-3 rounded-xl">
-                    <div className="flex items-center gap-2 mb-2">
-                      <User className="w-4 h-4 text-blue-400" />
-                      <strong className="text-blue-400">FONCTIONNELS</strong>
-                    </div>
-                    <p className="text-slate-300">Géolocalisation, token utilisateur, historique visites</p>
-                  </div>
-                  <div className="bg-purple-500/20 border border-purple-500/50 p-3 rounded-xl">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Activity className="w-4 h-4 text-purple-400" />
-                      <strong className="text-purple-400">ANALYTIQUES</strong>
-                    </div>
-                    <p className="text-slate-300">Statistiques d&apos;usage (désactivé actuellement)</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-3 justify-end">
-              <button
-                onClick={rejectNonEssentialCookies}
-                className="px-6 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold uppercase text-sm transition-all border border-slate-600"
-              >
-                Refuser Tout
-              </button>
-              <button
-                onClick={() => setShowCookieSettings(true)}
-                className="px-6 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold uppercase text-sm transition-all border border-blue-500"
-              >
-                Personnaliser
-              </button>
-              <button
-                onClick={acceptAllCookies}
-                className="px-8 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl font-black uppercase text-sm transition-all shadow-xl active:scale-95 flex items-center justify-center gap-2"
-              >
-                <Cookie className="w-5 h-5" />
-                Tout Accepter
-              </button>
-            </div>
-
-            <p className="text-[10px] text-slate-500 mt-4 text-center">
-              Conservation max: <strong>13 mois</strong> (conformité RGPD) •
-              Données stockées localement •
-              <a href="#privacy" className="underline hover:text-white ml-1">Politique de confidentialité</a>
-            </p>
+        <div className="fixed bottom-6 right-6 max-w-sm bg-slate-900/95 backdrop-blur-xl text-white p-5 z-[9999] rounded-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
+          <div className="flex items-center gap-3 mb-3">
+            <Shield className="w-5 h-5 text-blue-400" />
+            <h3 className="font-black text-sm uppercase tracking-tight">Cookies & Vie privée</h3>
+          </div>
+          <p className="text-[11px] text-slate-300 leading-relaxed mb-4">
+            Nous utilisons des cookies pour assurer le bon fonctionnement du site et de votre météo
+            personnalisée.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={acceptAllCookies}
+              className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold text-[10px] uppercase transition-all flex items-center justify-center gap-2"
+            >
+              Tout accepter
+            </button>
+            <button
+              onClick={() => setShowCookieSettings(true)}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg font-bold text-[10px] uppercase border border-white/5"
+            >
+              Option
+            </button>
+            <button
+              onClick={rejectNonEssentialCookies}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg font-bold text-[10px] uppercase border border-white/5 opacity-60 hover:opacity-100"
+            >
+              Refuser
+            </button>
           </div>
         </div>
       )}
@@ -832,7 +1429,10 @@ const App = () => {
                 <Shield className="w-8 h-8 text-blue-500" />
                 Paramètres des Cookies
               </h2>
-              <button onClick={() => setShowCookieSettings(false)} className="text-slate-400 hover:text-white">
+              <button
+                onClick={() => setShowCookieSettings(false)}
+                className="text-slate-400 hover:text-white"
+              >
                 <X className="w-6 h-6" />
               </button>
             </div>
@@ -848,10 +1448,13 @@ const App = () => {
                       <p className="text-xs text-slate-400">Toujours actifs</p>
                     </div>
                   </div>
-                  <div className="bg-green-500 px-4 py-2 rounded-full text-xs font-black">ACTIF</div>
+                  <div className="bg-green-500 px-4 py-2 rounded-full text-xs font-black">
+                    ACTIF
+                  </div>
                 </div>
                 <p className="text-sm text-slate-300 mb-3">
-                  Nécessaires au fonctionnement du site. Gèrent la sécurité, la navigation et les préférences de base.
+                  Nécessaires au fonctionnement du site. Gèrent la sécurité, la navigation et les
+                  préférences de base.
                 </p>
                 <div className="text-xs text-slate-400">
                   <strong>Cookies:</strong> allo_meteo_consent (13 mois)
@@ -872,17 +1475,21 @@ const App = () => {
                     <input
                       type="checkbox"
                       checked={cookiePreferences.functional}
-                      onChange={(e) => setCookiePreferences({ ...cookiePreferences, functional: e.target.checked })}
+                      onChange={(e) =>
+                        setCookiePreferences({ ...cookiePreferences, functional: e.target.checked })
+                      }
                       className="sr-only peer"
                     />
                     <div className="w-14 h-7 bg-slate-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-blue-600"></div>
                   </label>
                 </div>
                 <p className="text-sm text-slate-300 mb-3">
-                  Mémorisent votre localisation, ville, pays, historique de visites et préférences personnalisées.
+                  Mémorisent votre localisation, ville, pays, historique de visites et préférences
+                  personnalisées.
                 </p>
                 <div className="text-xs text-slate-400">
-                  <strong>Cookies:</strong> allo_meteo_user_token (13 mois)<br />
+                  <strong>Cookies:</strong> allo_meteo_user_token (13 mois)
+                  <br />
                   <strong>LocalStorage:</strong> allo_meteo_user_profile, lastUserActivity
                 </div>
               </div>
@@ -897,10 +1504,13 @@ const App = () => {
                       <p className="text-xs text-slate-400">Non implémenté</p>
                     </div>
                   </div>
-                  <div className="bg-slate-700 px-4 py-2 rounded-full text-xs font-black">DÉSACTIVÉ</div>
+                  <div className="bg-slate-700 px-4 py-2 rounded-full text-xs font-black">
+                    DÉSACTIVÉ
+                  </div>
                 </div>
                 <p className="text-sm text-slate-300">
-                  Collectent des statistiques anonymes sur l&apos;utilisation du site (non utilisé actuellement).
+                  Collectent des statistiques anonymes sur l&apos;utilisation du site (non utilisé
+                  actuellement).
                 </p>
               </div>
             </div>
@@ -926,16 +1536,33 @@ const App = () => {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm pt-[max(env(safe-area-inset-top),20px)] pb-2 px-2">
         <div className="max-w-7xl mx-auto px-4 h-24 flex items-center justify-between">
           <div className="flex items-center gap-6">
-            <div className="bg-blue-600 p-3 rounded-2xl shadow-xl"><Sun className="text-white w-8 h-8 animate-slow-spin" /></div>
+            <div className="bg-blue-600 p-3 rounded-2xl shadow-xl">
+              <Sun className="text-white w-8 h-8 animate-slow-spin" />
+            </div>
             <div>
-              <h1 className="font-black text-2xl tracking-tighter text-blue-900 leading-none uppercase italic">Allo-Météo</h1>
-              <span className="text-xs font-bold text-blue-500 tracking-[0.3em] uppercase">OISANS 2026</span>
+              <h1 className="font-black text-2xl tracking-tighter text-blue-900 leading-none uppercase italic">
+                Allo-Météo
+              </h1>
+              <span className="text-xs font-bold text-blue-500 tracking-[0.3em] uppercase">
+                OISANS 2026
+              </span>
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <button onClick={playWeatherBulletin} className={`flex items-center gap-3 px-6 py-2.5 rounded-xl font-black transition-all shadow-lg active:scale-95 ${isPlaying ? 'bg-red-500 text-white animate-pulse' : 'bg-blue-600 text-white'}`}>
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (isPlaying ? <Square className="w-5 h-5 fill-current" /> : <Volume2 className="w-5 h-5" />)}
-              <span className="text-base uppercase tracking-tight">{isPlaying ? "STOP" : "BULLETIN"}</span>
+            <button
+              onClick={playWeatherBulletin}
+              className={`flex items-center gap-3 px-6 py-2.5 rounded-xl font-black transition-all shadow-lg active:scale-95 ${isPlaying ? 'bg-red-500 text-white animate-pulse' : 'bg-blue-600 text-white'}`}
+            >
+              {loading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : isPlaying ? (
+                <Square className="w-5 h-5 fill-current" />
+              ) : (
+                <Volume2 className="w-5 h-5" />
+              )}
+              <span className="text-base uppercase tracking-tight">
+                {isPlaying ? 'STOP' : 'BULLETIN'}
+              </span>
             </button>
           </div>
         </div>
@@ -948,7 +1575,9 @@ const App = () => {
               <Siren className="w-12 h-12 shrink-0" />
               <div>
                 <h3 className="font-black text-2xl uppercase italic">Alerte Vigilance en Cours</h3>
-                <p className="font-bold opacity-90 text-sm">Consultez les détails des risques crues et sismiques ci-dessous.</p>
+                <p className="font-bold opacity-90 text-sm">
+                  Consultez les détails des risques crues et sismiques ci-dessous.
+                </p>
               </div>
             </div>
           )}
@@ -956,9 +1585,15 @@ const App = () => {
             <div className="relative z-10">
               <div className="flex items-center gap-4 text-blue-100 font-black text-xl uppercase mb-10">
                 <CalendarDays className="w-6 h-6" />
-                {new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(currentTime)}
+                {new Intl.DateTimeFormat('fr-FR', {
+                  weekday: 'long',
+                  day: 'numeric',
+                  month: 'long',
+                }).format(currentTime)}
                 <span className="text-white/30 font-light mx-2">|</span>
-                <span className="text-white">{currentTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                <span className="text-white">
+                  {currentTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                </span>
               </div>
               <div className="flex flex-col items-center justify-center gap-24 mb-16">
                 <div className="bg-white/10 backdrop-blur-3xl p-8 rounded-full border border-white/20 flex flex-col items-center justify-center min-w-[260px] min-h-[260px] weather-badge-glow relative">
@@ -974,11 +1609,16 @@ const App = () => {
                 <div className="flex flex-col gap-4 w-full max-w-sm">
                   <div className="p-8 bg-white/10 rounded-[2.5rem] border border-white/10 backdrop-blur-md">
                     <div className="mb-3">
-                      <p className="text-xl font-bold text-blue-200 tracking-widest leading-none mb-1">38520</p>
-                      <p className="text-2xl font-black text-white uppercase tracking-tighter italic leading-none">LE BOURG D'OISANS</p>
+                      <p className="text-xl font-bold text-blue-200 tracking-widest leading-none mb-1">
+                        38520
+                      </p>
+                      <p className="text-2xl font-black text-white uppercase tracking-tighter italic leading-none">
+                        LE BOURG D&apos;OISANS
+                      </p>
                     </div>
                     <p className="text-xl font-bold text-blue-100 uppercase italic tracking-tight opacity-90">
-                      {meteoText.match(/ciel\s?:\s?([^,.]+)/i)?.[1] || (manualWeather ? "Ciel dégagé" : "Actualisation...")}
+                      {meteoText.match(/ciel\s?:\s?([^,.]+)/i)?.[1] ||
+                        (manualWeather ? 'Ciel dégagé' : 'Actualisation...')}
                     </p>
                   </div>
                   {hasInversion && (
@@ -986,7 +1626,9 @@ const App = () => {
                       <TrendingUp className="w-7 h-7 text-orange-400" />
                       <div>
                         <p className="text-[9px] font-black text-orange-200 uppercase">Alerte</p>
-                        <p className="text-lg font-black uppercase leading-none text-orange-50">Inversion Thermique</p>
+                        <p className="text-lg font-black uppercase leading-none text-orange-50">
+                          Inversion Thermique
+                        </p>
                       </div>
                     </div>
                   )}
@@ -997,11 +1639,13 @@ const App = () => {
                   { icon: CloudRain, label: 'PRÉCIP.', val: rain },
                   { icon: CloudSnow, label: 'NEIGE', val: snow },
                   { icon: Droplets, label: 'HUMIDITÉ', val: humidity },
-                  { icon: Gauge, label: 'PRESSION', val: pressure }
+                  { icon: Gauge, label: 'PRESSION', val: pressure },
                 ].map((item, i) => (
                   <div key={i} className="bg-white/10 p-6 rounded-[2rem] border border-white/20">
                     <item.icon className="w-8 h-8 mb-4 text-blue-300" />
-                    <p className="text-[10px] font-black text-blue-100 uppercase tracking-widest leading-none mb-1">{item.label}</p>
+                    <p className="text-[10px] font-black text-blue-100 uppercase tracking-widest leading-none mb-1">
+                      {item.label}
+                    </p>
                     <p className="text-2xl font-black">{item.val}</p>
                   </div>
                 ))}
@@ -1016,29 +1660,54 @@ const App = () => {
           </section>
 
           <section className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
-            <h3 className="text-2xl font-black mb-8 flex items-center gap-5 uppercase text-blue-900"><Mountain className="w-10 h-10 text-blue-600" />TEMPÉRATURES DES STATIONS</h3>
+            <h3 className="text-2xl font-black mb-8 flex items-center gap-5 uppercase text-blue-900">
+              <Mountain className="w-10 h-10 text-blue-600" />
+              TEMPÉRATURES DES STATIONS
+            </h3>
             <div className="overflow-x-auto rounded-3xl border border-slate-100 shadow-sm">
               <table className="w-full text-left border-collapse">
                 <thead className="bg-slate-50 border-b border-slate-100">
                   <tr>
-                    <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">Station</th>
-                    <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Température</th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest">
+                      Station
+                    </th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">
+                      Température
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {globalLoading ? (
-                    <tr><td colSpan={2} className="px-6 py-12 text-center"><Loader2 className="w-10 h-10 animate-spin text-blue-600 mx-auto" /></td></tr>
-                  ) : (
-                    (Object.keys(stationWeather).length > 0) ? (
-                      Object.entries(stationWeather).map(([name, val], idx) => (
+                    <tr>
+                      <td colSpan={2} className="px-6 py-12 text-center">
+                        <Loader2 className="w-10 h-10 animate-spin text-blue-600 mx-auto" />
+                      </td>
+                    </tr>
+                  ) : Object.keys(stationWeather).length > 0 ? (
+                    Object.entries(stationWeather).map(
+                      (
+                        [name, val]: [string, string],
+                        idx: number, // Added types for map
+                      ) => (
                         <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
-                          <td className="px-6 py-5 font-bold text-slate-700 uppercase tracking-tight">{name}</td>
-                          <td className="px-6 py-5 font-black text-blue-600 text-right text-xl">{val}</td>
+                          <td className="px-6 py-5 font-bold text-slate-700 uppercase tracking-tight">
+                            {name}
+                          </td>
+                          <td className="px-6 py-5 font-black text-blue-600 text-right text-xl">
+                            {val}
+                          </td>
                         </tr>
-                      ))
-                    ) : (
-                      <tr><td colSpan={2} className="px-6 py-12 text-center text-slate-400 font-bold italic">Données stations indisponibles</td></tr>
+                      ),
                     )
+                  ) : (
+                    <tr>
+                      <td
+                        colSpan={2}
+                        className="px-6 py-12 text-center text-slate-400 font-bold italic"
+                      >
+                        Données stations indisponibles
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>
@@ -1047,24 +1716,56 @@ const App = () => {
 
           <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
-              <h3 className="text-xl font-black mb-6 flex items-center gap-4 uppercase text-slate-900"><SeismicIcon className="w-8 h-8 text-red-500" /> RISQUE SISMIQUE</h3>
-              <div className={`p-8 rounded-[2.5rem] border-b-8 transition-all flex flex-col items-center gap-4 ${seismicStyle.bg} ${seismicStyle.pulse ? 'animate-pulse' : ''}`}>
-                <div className="bg-white/20 p-4 rounded-full"><SeismicIcon className={`w-12 h-12 ${seismicStyle.icon}`} /></div>
+              <h3 className="text-xl font-black mb-6 flex items-center gap-4 uppercase text-slate-900">
+                <SeismicIcon className="w-8 h-8 text-red-500" /> RISQUE SISMIQUE
+              </h3>
+              <div
+                className={`p-8 rounded-[2.5rem] border-b-8 transition-all flex flex-col items-center gap-4 ${seismicStyle.bg} ${seismicStyle.pulse ? 'animate-pulse' : ''}`}
+              >
+                <div className="bg-white/20 p-4 rounded-full">
+                  <SeismicIcon className={`w-12 h-12 ${seismicStyle.icon}`} />
+                </div>
                 <div className="text-center">
-                  <p className={`text-[10px] font-black uppercase tracking-widest mb-1 opacity-80 ${seismicStyle.text}`}>{seismicStyle.label}</p>
-                  <p className={`text-2xl font-black uppercase italic leading-none ${seismicStyle.text}`}>{seismicStyle.title}</p>
-                  <p className={`text-xs mt-3 font-bold opacity-70 ${seismicStyle.text}`}>{risqueSismique}</p>
+                  <p
+                    className={`text-[10px] font-black uppercase tracking-widest mb-1 opacity-80 ${seismicStyle.text}`}
+                  >
+                    {seismicStyle.label}
+                  </p>
+                  <p
+                    className={`text-2xl font-black uppercase italic leading-none ${seismicStyle.text}`}
+                  >
+                    {seismicStyle.title}
+                  </p>
+                  <p className={`text-xs mt-3 font-bold opacity-70 ${seismicStyle.text}`}>
+                    {risqueSismique}
+                  </p>
                 </div>
               </div>
             </div>
             <div className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
-              <h3 className="text-xl font-black mb-6 flex items-center gap-4 uppercase text-slate-900"><FloodIcon className="w-8 h-8 text-blue-500" /> RISQUE DE CRUES</h3>
-              <div className={`p-8 rounded-[2.5rem] border-b-8 transition-all flex flex-col items-center gap-4 ${floodStyle.bg} ${floodStyle.pulse ? 'animate-pulse' : ''}`}>
-                <div className="bg-white/20 p-4 rounded-full"><FloodIcon className={`w-12 h-12 ${floodStyle.icon}`} /></div>
+              <h3 className="text-xl font-black mb-6 flex items-center gap-4 uppercase text-slate-900">
+                <FloodIcon className="w-8 h-8 text-blue-500" /> RISQUE DE CRUES
+              </h3>
+              <div
+                className={`p-8 rounded-[2.5rem] border-b-8 transition-all flex flex-col items-center gap-4 ${floodStyle.bg} ${floodStyle.pulse ? 'animate-pulse' : ''}`}
+              >
+                <div className="bg-white/20 p-4 rounded-full">
+                  <FloodIcon className={`w-12 h-12 ${floodStyle.icon}`} />
+                </div>
                 <div className="text-center">
-                  <p className={`text-[10px] font-black uppercase tracking-widest mb-1 opacity-80 ${floodStyle.text}`}>{floodStyle.label}</p>
-                  <p className={`text-2xl font-black uppercase italic leading-none ${floodStyle.text}`}>{floodStyle.title}</p>
-                  <p className={`text-xs mt-3 font-bold opacity-70 ${floodStyle.text}`}>{risqueCrues}</p>
+                  <p
+                    className={`text-[10px] font-black uppercase tracking-widest mb-1 opacity-80 ${floodStyle.text}`}
+                  >
+                    {floodStyle.label}
+                  </p>
+                  <p
+                    className={`text-2xl font-black uppercase italic leading-none ${floodStyle.text}`}
+                  >
+                    {floodStyle.title}
+                  </p>
+                  <p className={`text-xs mt-3 font-bold opacity-70 ${floodStyle.text}`}>
+                    {risqueCrues}
+                  </p>
                 </div>
               </div>
             </div>
@@ -1074,28 +1775,70 @@ const App = () => {
             <div className="absolute top-0 right-0 bg-indigo-50 px-6 py-2 rounded-bl-[2rem] text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
               <Sparkles className="w-3 h-3" /> Source IA en temps réel
             </div>
-            <h3 className="text-2xl font-black mb-8 flex items-center gap-5 uppercase text-indigo-900"><Ticket className="w-10 h-10 text-indigo-600" />ÉVÉNEMENTS OISANS</h3>
+            <h3 className="text-2xl font-black mb-8 flex items-center gap-5 uppercase text-indigo-900">
+              <Ticket className="w-10 h-10 text-indigo-600" />
+              ÉVÉNEMENTS OISANS
+            </h3>
             <div className="space-y-6">
-              {getSection('EVENEMENTS').split('\n').filter(e => e.trim() && (e.includes('-') || e.includes('•'))).length > 0 ? (
-                getSection('EVENEMENTS').split('\n').filter(e => e.trim() && (e.includes('-') || e.includes('•'))).map((event, idx) => (
-                  <div key={idx} className="group p-8 bg-slate-50 hover:bg-indigo-50/50 rounded-[2.5rem] border-2 border-slate-100 hover:border-indigo-100 transition-all cursor-default">
-                    <div className="flex items-start gap-6">
-                      <div className="bg-white p-4 rounded-2xl shadow-sm group-hover:scale-110 transition-transform"><Ticket className="w-6 h-6 text-indigo-500" /></div>
-                      <div>
-                        <p className="text-xl font-bold text-slate-800 leading-snug">{event.replace(/^- /, '').trim()}</p>
-                        <div className="flex items-center gap-3 mt-3">
-                          <span className="bg-indigo-600/10 text-indigo-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Aujourd&apos;hui</span>
+              {getSection('EVENEMENTS')
+                .split('\n')
+                .filter((e) => e.trim() && (e.includes('-') || e.includes('•'))).length > 0 ? (
+                getSection('EVENEMENTS')
+                  .split('\n')
+                  .filter((e) => e.trim() && (e.includes('-') || e.includes('•')))
+                  .map((event: string, idx: number) => (
+                    <div
+                      key={idx}
+                      className="group p-8 bg-slate-50 hover:bg-indigo-50/50 rounded-[2.5rem] border-2 border-slate-100 hover:border-indigo-100 transition-all cursor-default"
+                    >
+                      <div className="flex items-start gap-6">
+                        <div className="bg-white p-4 rounded-2xl shadow-sm group-hover:scale-110 transition-transform">
+                          <Ticket className="w-6 h-6 text-indigo-500" />
+                        </div>
+                        <div>
+                          <p className="text-xl font-bold text-slate-800 leading-snug">
+                            {event
+                              .replace(/^[-•]\s?/, '')
+                              .replace(/[*#]/g, '')
+                              .trim()}
+                          </p>
+                          <div className="flex items-center gap-3 mt-3">
+                            <span className="bg-indigo-600/10 text-indigo-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                              Aujourd&apos;hui
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  ))
               ) : (
                 <div className="p-12 text-center border-4 border-dashed border-slate-100 rounded-[3rem]">
-                  <p className="text-slate-400 font-bold italic text-lg">Recherche des événements locaux en cours...</p>
+                  <p className="text-slate-400 font-bold italic text-lg">
+                    Recherche des événements locaux en cours...
+                  </p>
                 </div>
               )}
             </div>
+            {expertData?.sources && expertData.sources.length > 0 && (
+              <div className="mt-8 flex flex-wrap gap-2 px-4 opacity-60">
+                <p className="w-full text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                  Derniers agendas vérifiés :
+                </p>
+                {expertData.sources
+                  .slice(0, 4)
+                  .map((source: { url?: string; displayUri?: string }, i: number) => (
+                    <a
+                      key={i}
+                      href={source.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[9px] bg-slate-100 text-slate-500 px-2 py-1 rounded-md hover:bg-indigo-100 hover:text-indigo-600 transition-colors truncate max-w-[150px]"
+                    >
+                      {source.displayUri || 'Agenda local'}
+                    </a>
+                  ))}
+              </div>
+            )}
           </section>
           <section className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200 overflow-hidden relative">
             <div className="absolute top-0 right-0 bg-orange-50 px-6 py-2 rounded-bl-[2rem] text-[10px] font-black text-orange-500 uppercase tracking-widest flex items-center gap-2">
@@ -1107,23 +1850,58 @@ const App = () => {
               </h3>
             </div>
 
-            <div className={`p-8 rounded-[2.5rem] border-b-8 transition-all flex flex-col md:flex-row items-center gap-8 ${routeStyle.bg} ${routeStyle.pulse ? 'animate-pulse' : ''}`}>
+            <div
+              className={`p-8 rounded-[2.5rem] border-b-8 transition-all flex flex-col md:flex-row items-center gap-8 ${routeStyle.bg} ${routeStyle.pulse ? 'animate-pulse' : ''}`}
+            >
               <div className="bg-white/20 p-5 rounded-full shadow-lg">
                 <Siren className={`w-12 h-12 ${routeStyle.icon}`} />
               </div>
               <div className="text-center md:text-left flex-1">
-                <p className={`text-[10px] font-black uppercase tracking-widest mb-1 opacity-80 ${routeStyle.text}`}>{routeStyle.label}</p>
-                <p className={`text-3xl font-black uppercase italic leading-tight ${routeStyle.text}`}>{routeStatus.replace(/statut global\s?[:-]?\s?/i, '')}</p>
-                {routeDetails && routeDetails.toLowerCase() !== routeStatus.toLowerCase() && !routeDetails.toLowerCase().includes('fluide') && (
-                  <p className={`mt-3 font-bold opacity-90 leading-relaxed ${routeStyle.text}`}>{routeDetails.replace(/incidents\s?[:-]?\s?/i, '')}</p>
-                )}
+                <p
+                  className={`text-[10px] font-black uppercase tracking-widest mb-1 opacity-80 ${routeStyle.text}`}
+                >
+                  {routeStyle.label}
+                </p>
+                <p
+                  className={`text-3xl font-black uppercase italic leading-tight ${routeStyle.text}`}
+                >
+                  {routeStatus.replace(/statut global\s?[:-]?\s?/i, '').replace(/[*#]/g, '')}
+                </p>
+                {routeDetails &&
+                  routeDetails.toLowerCase() !== routeStatus.toLowerCase() &&
+                  !routeDetails.toLowerCase().includes('fluide') && (
+                    <p className={`mt-3 font-bold opacity-90 leading-relaxed ${routeStyle.text}`}>
+                      {routeDetails.replace(/incidents\s?[:-]?\s?/i, '').replace(/[*#]/g, '')}
+                    </p>
+                  )}
               </div>
             </div>
+
+            {expertData?.sources && expertData.sources.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-2 px-4">
+                <p className="w-full text-[8px] font-black text-slate-300 uppercase tracking-widest mb-1">
+                  Sources analysées :
+                </p>
+                {expertData.sources.slice(0, 3).map((source: GroundingSource, i: number) => (
+                  <a
+                    key={source.url + i}
+                    href={source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[9px] bg-slate-100 text-slate-500 px-2 py-1 rounded-md hover:bg-orange-100 hover:text-orange-600 transition-colors truncate max-w-[150px]"
+                  >
+                    {source.displayUri}
+                  </a>
+                ))}
+              </div>
+            )}
 
             <div className="mt-6 p-6 bg-slate-50 rounded-[2rem] border-2 border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="w-3 h-3 bg-emerald-500 rounded-full animate-ping"></div>
-                <p className="text-xs font-black text-slate-500 uppercase tracking-widest text-center md:text-left">Analyse des axes et directions du secteur</p>
+                <p className="text-xs font-black text-slate-500 uppercase tracking-widest text-center md:text-left">
+                  Analyse des axes et directions du secteur
+                </p>
               </div>
               <ExternalLink className="w-4 h-4 text-slate-300" />
             </div>
@@ -1132,45 +1910,88 @@ const App = () => {
 
         <aside className="lg:col-span-4 space-y-10">
           <section className="bg-indigo-950 rounded-[3rem] p-10 text-white shadow-2xl relative overflow-hidden text-center flex flex-col items-center justify-center min-h-[300px]">
-            <h3 className="text-4xl font-black uppercase text-indigo-300 mb-6 tracking-tighter w-full">LUNE</h3>
+            <h3 className="text-4xl font-black uppercase text-indigo-300 mb-6 tracking-tighter w-full">
+              LUNE
+            </h3>
             <div className="bg-indigo-900/40 p-6 rounded-full border-4 border-indigo-800 shadow-2xl inline-block mb-6 text-blue-400">
               <Moon className="w-16 h-16 fill-current" />
             </div>
             <p className="text-xl font-black uppercase text-white tracking-widest italic leading-none text-center">
-              {(getSection('LUNE') || getMoonPhase()).replace(/[^\p{L}\p{N}\p{P}\p{Z}^$\n]/gu, '').trim()}
+              {(getSection('LUNE') || getMoonPhase()).trim()}
             </p>
           </section>
           <section className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
-            <h3 className="text-xl font-black mb-8 uppercase text-blue-900 flex items-center gap-5"><Mail className="w-7 h-7 text-blue-600" /> BULLETIN DE 07H00</h3>
+            <h3 className="text-xl font-black mb-8 uppercase text-blue-900 flex items-center gap-5">
+              <Mail className="w-7 h-7 text-blue-600" /> BULLETIN DE 07H00
+            </h3>
             <div className="space-y-4">
-              <input type="text" placeholder="PRÉNOM" className="w-full px-6 py-5 rounded-2xl bg-slate-50 border-2 border-slate-100 text-sm font-black uppercase outline-none focus:border-blue-500" />
-              <input type="email" placeholder="VOTRE EMAIL" className="w-full px-6 py-5 rounded-2xl bg-slate-50 border-2 border-slate-100 text-sm font-black uppercase outline-none focus:border-blue-500" />
-              <button onClick={() => setNewsletterSubscribed(true)} className="w-full py-5 bg-blue-600 text-white rounded-[2rem] font-black text-sm uppercase shadow-xl hover:bg-blue-700 transition-all">{newsletterSubscribed ? "INSCRIT !" : "S'INSCRIRE"}</button>
+              <input
+                type="text"
+                placeholder="PRÉNOM"
+                className="w-full px-6 py-5 rounded-2xl bg-slate-50 border-2 border-slate-100 text-sm font-black uppercase outline-none focus:border-blue-500"
+              />
+              <input
+                type="email"
+                placeholder="VOTRE EMAIL"
+                className="w-full px-6 py-5 rounded-2xl bg-slate-50 border-2 border-slate-100 text-sm font-black uppercase outline-none focus:border-blue-500"
+              />
+              <button
+                onClick={() => setNewsletterSubscribed(true)}
+                className="w-full py-5 bg-blue-600 text-white rounded-[2rem] font-black text-sm uppercase shadow-xl hover:bg-blue-700 transition-all"
+              >
+                {newsletterSubscribed ? 'INSCRIT !' : 'S&apos;INSCRIRE'}
+              </button>
             </div>
           </section>
           <section className="bg-white rounded-[3rem] p-10 shadow-sm border border-slate-200">
-            <h3 className="text-xl font-black mb-8 uppercase text-orange-600 flex items-center gap-4"><Sparkles className="w-7 h-7" /> ÉPHÉMÉRIDE</h3>
+            <h3 className="text-xl font-black mb-8 uppercase text-orange-600 flex items-center gap-4">
+              <Sparkles className="w-7 h-7" /> ÉPHÉMÉRIDE
+            </h3>
             <div className="p-6 bg-orange-50 rounded-[2rem] border-2 border-orange-100 text-center">
-              <p className="text-[10px] font-black uppercase text-orange-400 mb-1 tracking-widest">Saint du Jour</p>
+              <p className="text-[10px] font-black uppercase text-orange-400 mb-1 tracking-widest">
+                Saint du Jour
+              </p>
               <p className="text-2xl font-black uppercase text-orange-900">{getHardcodedSaint()}</p>
             </div>
           </section>
-          <div onClick={() => window.open(REPO_URL, '_blank')} className="bg-slate-900 p-10 rounded-[3rem] text-white flex justify-between items-center group cursor-pointer active:scale-95 transition-all shadow-2xl border-b-[8px] border-slate-800">
-            <div className="flex items-center gap-5"><Github className="w-10 h-10 text-white" /><div><p className="text-[9px] font-black uppercase text-blue-400 mb-1 tracking-widest">ALLO-MÉTÉO</p><p className="text-2xl font-black uppercase italic leading-none">OISANS 2026</p></div></div>
+          <div
+            onClick={() => window.open(REPO_URL, '_blank')}
+            className="bg-slate-900 p-10 rounded-[3rem] text-white flex justify-between items-center group cursor-pointer active:scale-95 transition-all shadow-2xl border-b-[8px] border-slate-800"
+          >
+            <div className="flex items-center gap-5">
+              <Github className="w-10 h-10 text-white" />
+              <div>
+                <p className="text-[9px] font-black uppercase text-blue-400 mb-1 tracking-widest">
+                  ALLO-MÉTÉO
+                </p>
+                <p className="text-2xl font-black uppercase italic leading-none">OISANS 2026</p>
+              </div>
+            </div>
             <ExternalLink className="w-6 h-6 text-white/30 group-hover:text-white" />
           </div>
         </aside>
       </main>
       <footer className="w-full mt-8 py-10 bg-slate-950 text-center border-t border-slate-800 flex flex-col items-center justify-center">
         <div className="max-w-4xl mx-auto px-4 flex flex-col items-center">
-          <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.6em] mb-4 italic">© 2026 ALLO-MÉTÉO OISANS</p>
+          <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.6em] mb-2 italic">
+            © 2026 ALLO-MÉTÉO OISANS — v1.1.2
+          </p>
+          <p className="text-slate-600 text-[8px] font-bold uppercase tracking-widest mb-4">
+            Dernière mise à jour :{' '}
+            {new Date().toLocaleDateString('fr-FR', {
+              day: '2-digit',
+              month: 'long',
+              year: 'numeric',
+            })}
+          </p>
           <a
-            href="http://ThePhoenixAgency.github.io"
+            href="https://EthanThePhoenix38.github.io"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-3 text-blue-500 hover:text-blue-400 font-black uppercase text-[9px] tracking-[0.2em] transition-all hover:gap-4 group"
           >
-            PhoenixProject <ExternalLink className="w-3 h-3 text-blue-600 transition-transform group-hover:translate-x-1" />
+            EthanThePhoenix38{' '}
+            <ExternalLink className="w-3 h-3 text-blue-600 transition-transform group-hover:translate-x-1" />
           </a>
         </div>
       </footer>

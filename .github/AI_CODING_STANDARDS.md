@@ -69,12 +69,14 @@ on:
 ## Patterns à Éviter
 
 ### Template Strings pour URLs
+
 ```javascript
 // À éviter
 const url = `${userInput}/endpoint`;
 ```
 
 ### Erreurs Détaillées
+
 ```javascript
 // À éviter
 catch (e) {
@@ -83,6 +85,7 @@ catch (e) {
 ```
 
 ### Requêtes sans Timeout
+
 ```javascript
 // À éviter
 await fetch(url);
@@ -91,6 +94,7 @@ await fetch(url);
 ## Patterns Recommandés
 
 ### Construction URL
+
 ```javascript
 // Recommandé
 const validated = await validate(input);
@@ -99,6 +103,7 @@ const url = new URL('/endpoint', safe).toString();
 ```
 
 ### Gestion Erreur
+
 ```javascript
 // Recommandé
 try {
@@ -110,6 +115,7 @@ try {
 ```
 
 ### Requête avec Timeout
+
 ```javascript
 // Recommandé
 const controller = new AbortController();
@@ -137,5 +143,4 @@ Lors de génération/modification de code :
 
 ---
 
-Dernière mise à jour : 2026-01-18
-
+Dernière mise à jour : 2026-01-28

@@ -39,48 +39,49 @@ else
   echo "nvm non disponible — installe manuellement node 20";
 fi
 
-echo "(3/9) Installer Docker Desktop (si souhaité)";
-if ! command -v docker >/dev/null 2>&1; then
-  echo "Installation Docker Desktop (via Homebrew cask)";
-  brew install --cask docker --quiet || true
-  echo "Démarre Docker Desktop via Launchpad ou 'open -a Docker'";
-else
-  echo "Docker déjà installé";
+echo "(3/9) Tools verification";
+if ! command -v git >/dev/null 2>&1; then
+  echo "Git not found";
 fi
 
-echo "(4/9) Installer gh (GitHub CLI)";
+echo "(4/9) Installing gh (GitHub CLI)";
 if ! command -v gh >/dev/null 2>&1; then
   brew install gh --quiet || true
 fi
 
-echo "(5/9) Installer VS Code (UI)";
+echo "(5/9) Installing VS Code (UI)";
 if ! command -v code >/dev/null 2>&1; then
   brew install --cask visual-studio-code --quiet || true
 fi
 
 echo "(6/9) Cloner repo et installer dépendances";
-if [ ! -d "Allo-Meteo" ]; then
-  git clone git@github.com:ThePhoenixAgency/Allo-Meteo.git || true
+# Détection intelligente du dossier
+PROJECT_DIR="Allo-Meteo"
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ "$(basename "$SCRIPT_PATH")" = "$PROJECT_DIR" ]; then
+  echo "Déjà dans le dossier du projet ($SCRIPT_PATH)";
+  ROOT_DIR="$SCRIPT_PATH"
+else
+  if [ ! -d "$PROJECT_DIR" ]; then
+    echo "Clonage du projet dans $(pwd)/$PROJECT_DIR...";
+    git clone git@github.com:ThePhoenixAgency/Allo-Meteo.git
+  fi
+  ROOT_DIR="$(pwd)/$PROJECT_DIR"
 fi
-cd Allo-Meteo || exit 1
-npm ci || true
+
+cd "$ROOT_DIR" || exit 1
+echo "Installation des dépendances dans $ROOT_DIR...";
+npm install # Utilisation de install pour plus de flexibilité en dev
 npm run prepare 2>/dev/null || true
 
-echo "(7/9) Préparer local-ai-mcp (pack & docker)";
-cd packages/local-ai-mcp || true
-npm ci || true
-npm run pack 2>/dev/null || true
-cd - >/dev/null
-
-echo "(8/9) Vérifications finales";
+echo "(7/9) Final checks";
 node -v || true
 npm -v || true
 git --version || true
 
 echo "--- Bootstrap terminé. Pour démarrer l'app:";
 echo "  cd Allo-Meteo && npm run dev";
-echo "Pour lancer le mock local AI (tests): npm run local-ai";
-echo "Pour builder et packer le micro-MCP: cd packages/local-ai-mcp && npm run pack";
 
 echo "NOTE: Ce script tente d'être idempotent et non intrusive. Vérifie manuellement chaque étape si besoin.";
 exit 0
